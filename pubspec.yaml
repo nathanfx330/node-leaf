@@ -1,0 +1,44 @@
+# --- File: pubspec.yaml ---
+name: node_leaf
+description: A visual, node-based RAG studio and prompt orchestration engine for Redleaf.
+publish_to: 'none'
+version: 2.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # State Management
+  provider: ^6.1.5+1
+  
+  # Unique IDs for nodes and Redleaf Pills
+  uuid: ^4.5.3
+  
+  # System file dialogs (Used for locking the Redleaf Workspace)
+  file_picker: ^10.3.10
+  
+  # API Communication (Ollama Streaming & Redleaf Fetching)
+  http: ^1.6.0
+  
+  # HTML Parser (Needed for future implementation of Redleaf CSRF Auth login)
+  html: ^0.15.4
+
+  # URL Launcher for opening Redleaf Document citations in the browser
+  url_launcher: ^6.2.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  
+  # Linter for Dart 3
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+
+  # To add assets to your application, add an assets section, like this:
+  assets:
+    - assets/logo.png
