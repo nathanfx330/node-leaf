@@ -6,7 +6,7 @@ Instead of chatting with a standard text box, Node Leaf provides an infinite can
 
 ![Node Leaf](https://nathanielwestveer.com/posts/node-leaf/nl2.png)
 
-
+Blog Post: https://nathanielwestveer.com/posts/node-leaf/
 ---
 
 ## ✨ Key Features
