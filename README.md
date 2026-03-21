@@ -1,12 +1,12 @@
 # Node Leaf
 
 **Node Leaf** is a visual, node-based RAG (Retrieval-Augmented Generation) studio and prompt orchestration engine. Built in Flutter, it serves as the ultimate power-user client for the [Redleaf Knowledge Engine](https://github.com/nathanfx330/redleaf).
+Blog Post: https://nathanielwestveer.com/posts/node-leaf/
 
 Instead of chatting with a standard text box, Node Leaf provides an infinite canvas where you can visually wire together Redleaf database queries, agent personas, and prompt instructions, and feed them directly into local LLMs via **Ollama**.
 
 ![Node Leaf](https://nathanielwestveer.com/posts/node-leaf/nl2.png)
 
-Blog Post: https://nathanielwestveer.com/posts/node-leaf/
 ---
 
 ## ✨ Key Features
