@@ -52,7 +52,7 @@ Node Leaf relies on a Directed Acyclic Graph (DAG) architecture. Data flows from
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/node_leaf.git
+   git clone https://github.com/nathanfx330/node_leaf.git
    cd node_leaf
    ```
 
