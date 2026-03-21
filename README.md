@@ -4,6 +4,9 @@
 
 Instead of chatting with a standard text box, Node Leaf provides an infinite canvas where you can visually wire together Redleaf database queries, agent personas, and prompt instructions, and feed them directly into local LLMs via **Ollama**.
 
+![Node Leaf](https://nathanielwestveer.com/posts/node-leaf/nl2.png)
+
+
 ---
 
 ## ✨ Key Features
