@@ -13,6 +13,7 @@ Instead of chatting with a standard text box, Node Leaf provides an infinite can
 ## ✨ Key Features
 
 * **Visual Prompt Programming:** Drag, drop, and wire nodes together to build complex context chains for your LLM.
+* **Agentic Wiki (Infinite Memory):** Build an interconnected, auto-updating local Wiki. Agents read existing Markdown files, research your database for missing facts, and permanently rewrite the files with Git-style version backups.
 * **Direct Redleaf Integration:** Extract text from specific documents, search the database, or pull graph relationships without ever copy-pasting.
 * **Autonomous Agents:** Use the *Deep Study* node to deploy an agent that iteratively searches your Redleaf database, reads documents, and takes notes before writing a final report.
 * **100% Local & Private:** Connects directly to your local Redleaf Flask server and your local Ollama instance. No cloud APIs required.
@@ -29,6 +30,7 @@ Node Leaf relies on a Directed Acyclic Graph (DAG) architecture. Data flows from
 * **➕ Scratchpad:** Your basic text building block. Write instructions, notes, or attach Redleaf Entity Pills.
 * **🎭 Agent Persona:** Define the role, tone, and perspective the AI should adopt.
 * **🗺️ System Briefing:** Automatically injects a high-level statistical overview of your Redleaf database.
+* **📘 Wiki Reader:** Loads a permanent Markdown (`.md`) file from your local Wiki folder into the LLM context.
 
 ### Redleaf Retrieval Nodes
 * **🔍 Global Search:** Perform a full-text search across your database and feed the top snippets to the LLM.
@@ -39,8 +41,10 @@ Node Leaf relies on a Directed Acyclic Graph (DAG) architecture. Data flows from
 
 ### Execution Nodes
 * **✨ Ollama Output:** Compiles all upstream context and generates a final written response.
+* **📝 Summarizer:** A direct, high-speed execution node that bypasses agent loops to instantly process and summarize upstream context.
 * **💬 Ollama Chat:** Turns your upstream context into a system prompt for a continuous, interactive chat session.
 * **🤓 Deep Study (Geek Out):** Enter a topic, and this autonomous agent will loop through Redleaf—searching, reading, and taking notes—until it has enough data to synthesize a master report.
+* **🖋️ Wiki Writer:** Acts as a strict fact-checker. It compares upstream research against the current Wiki state, resolves contradictions, and permanently saves the updated knowledge to your local Markdown files (with automatic timestamped backups).
 
 ---
 
