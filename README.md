@@ -13,6 +13,7 @@ Instead of chatting with a standard text box, Node Leaf provides an infinite can
 ## ✨ Key Features
 
 * **Visual Prompt Programming:** Drag, drop, and wire nodes together to build complex context chains for your LLM.
+* **Multi-Agent Debates (MoE):** Run VRAM-efficient, multi-persona debates (e.g., The Visionary, The Skeptic, The Archivist) to automatically map ontological gaps in your research.
 * **Agentic Wiki (Infinite Memory):** Build an interconnected, auto-updating local Wiki. Agents read existing Markdown files, research your database for missing facts, and permanently rewrite the files with Git-style version backups.
 * **Direct Redleaf Integration:** Extract text from specific documents, search the database, or pull graph relationships without ever copy-pasting.
 * **Autonomous Agents:** Use the *Deep Study* node to deploy an agent that iteratively searches your Redleaf database, reads documents, and takes notes before writing a final report.
@@ -45,6 +46,7 @@ Node Leaf relies on a Directed Acyclic Graph (DAG) architecture. Data flows from
 * **💬 Ollama Chat:** Turns your upstream context into a system prompt for a continuous, interactive chat session.
 * **🤓 Deep Study (Geek Out):** Enter a topic, and this autonomous agent will loop through Redleaf—searching, reading, and taking notes—until it has enough data to synthesize a master report.
 * **🖋️ Wiki Writer:** Acts as a strict fact-checker. It compares upstream research against the current Wiki state, resolves contradictions, and permanently saves the updated knowledge to your local Markdown files (with automatic timestamped backups).
+* **🏛️ Wiki Council:** Simulates a Mixture of Experts (MoE) debate loop. It convenes a dynamic roster of distinct personas to analyze your current research against the Redleaf Knowledge Graph, debate missing links, and output a synthesized report of suggested new Wiki pages.
 
 ---
 
