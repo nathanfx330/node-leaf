@@ -25,7 +25,7 @@ class NetworkState extends ChangeNotifier {
   bool _isScanningModels = false;
   bool _isPreloadingModel = false;
   
-  // --- NEW: Force Answer Flag ---
+  // --- Force Answer Flag ---
   bool _isForceAnswerTriggered = false;
 
   NetworkState() {
@@ -172,7 +172,7 @@ class NetworkState extends ChangeNotifier {
     }
   }
 
-  // --- NEW: FORCE ANSWER TRIGGER ---
+  // --- FORCE ANSWER TRIGGER ---
   void forceAnswerNow() {
     if (_generatingNodeId != null) {
       _isForceAnswerTriggered = true;
@@ -193,9 +193,9 @@ class NetworkState extends ChangeNotifier {
     }
   }
 
-  Future<void> triggerOllamaGeneration(StoryNode node, List<StoryNode> sequence) async {
+  Future<void> triggerOllamaGeneration(StoryNode node, List<StoryNode> sequence, GraphState graphState) async {
     _generatingNodeId = node.id; 
-    _isForceAnswerTriggered = false; // Reset flag
+    _isForceAnswerTriggered = false; 
     node.ollamaResult = ""; 
     notifyListeners();
 
@@ -203,15 +203,23 @@ class NetworkState extends ChangeNotifier {
     String userInstructions = node.ollamaPrompt.isNotEmpty ? node.ollamaPrompt : "Process the following context.";
     String manualStoryContext = "";
     
-    // --- ADDED: Persona Extraction ---
     String customPersona = "";
 
     // STEP 1: Read the Chain (Manual Context)
     for (var n in sequence) {
-      if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study) continue; 
+      if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study || n.type == NodeType.summarize || n.type == NodeType.wikiWriter) continue; 
 
       if (n.type == NodeType.persona) {
         customPersona = n.content.trim();
+        continue;
+      }
+
+      if (n.type == NodeType.wikiReader && n.wikiTitle.isNotEmpty) {
+        node.ollamaResult = "🤖 Reading Wiki Page '${n.wikiTitle}'...\n"; notifyListeners();
+        final wikiContext = await graphState.readWikiPage(n.wikiTitle, this);
+        finalPrompt.writeln("\n>>> CURRENT WIKI PAGE STATE: '${n.wikiTitle}' <<<");
+        finalPrompt.writeln(wikiContext);
+        finalPrompt.writeln(">>> END WIKI PAGE STATE <<<\n");
         continue;
       }
 
@@ -309,7 +317,6 @@ class NetworkState extends ChangeNotifier {
       int maxSteps = 4; 
       
       for (int step = 1; step <= maxSteps; step++) {
-        // Check if user forced an answer
         if (_isForceAnswerTriggered) {
           node.ollamaResult += "\n> [User Override] Skipping remaining research steps. Moving to synthesis.\n";
           notifyListeners();
@@ -354,7 +361,6 @@ Return JSON ONLY:
             break;
           }
           
-          // Check flag again before searching
           if (_isForceAnswerTriggered) break;
 
           // Execute Search
@@ -366,7 +372,6 @@ Return JSON ONLY:
             continue;
           }
           
-          // Check flag again before note-taking
           if (_isForceAnswerTriggered) break;
 
           // Take Notes
@@ -409,7 +414,7 @@ If nothing relevant is found, return "Nothing relevant." """;
     node.ollamaResult = "🤖 Agent: Writing final synthesis...\n\n"; notifyListeners();
     final fullPayload = "$userInstructions\n\nHere is the source data and prompt nodes:\n$manualStoryContext\n${finalPrompt.toString()}";
     
-    // --- MODIFIED: Inject Persona ---
+    final currentDate = DateTime.now().toString().split('.')[0];
     String systemInstruction = node.ollamaNoBacktalk 
       ? "You are a Redleaf Synthesis Agent. Output ONLY the resulting text. Do not include any conversational filler. Start immediately with the text. YOU MUST INCLUDE INLINE CITATIONS like [Doc 12] based on the REDLEAF CONTEXT provided." 
       : "You are a helpful writing assistant.";
@@ -417,6 +422,8 @@ If nothing relevant is found, return "Nothing relevant." """;
     if (customPersona.isNotEmpty) {
       systemInstruction = "YOUR ACTIVE PERSONA: $customPersona\n\n$systemInstruction\nYou MUST adopt this persona completely in your writing style, tone, and perspective.";
     }
+
+    systemInstruction = "CURRENT SYSTEM TIME: $currentDate\n\n$systemInstruction";
 
     try {
       final response = await http.Client().send(http.Request('POST', Uri.parse('$_ollamaUrl/api/generate'))
@@ -447,7 +454,7 @@ If nothing relevant is found, return "Nothing relevant." """;
   // --- OLLAMA CHAT PIPELINE ---
   Future<void> triggerOllamaChat(StoryNode node, List<StoryNode> sequence, String userMessage, GraphState graphState) async {
     _generatingNodeId = node.id; 
-    _isForceAnswerTriggered = false; // Reset flag
+    _isForceAnswerTriggered = false; 
     notifyListeners();
 
     graphState.appendChatMessage(node.id, "user", userMessage);
@@ -460,18 +467,23 @@ If nothing relevant is found, return "Nothing relevant." """;
       systemInstructions += "\n\nYou are a strict, analytical research agent. You MUST base your answers entirely on the provided REDLEAF CONTEXT. You MUST include inline citations exactly like [Doc 12] when stating facts derived from the context. Do not use conversational filler or backtalk.";
     }
     
-    // --- ADDED: Persona Extraction ---
     String customPersona = "";
 
     // 2. Gather Context from the upstream chain
     for (var n in sequence) {
-      if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study) continue;
+      if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study || n.type == NodeType.summarize || n.type == NodeType.wikiWriter) continue;
       
       if (n.type == NodeType.persona) {
         customPersona = n.content.trim();
         continue;
       }
       
+      if (n.type == NodeType.wikiReader && n.wikiTitle.isNotEmpty) {
+        final wikiContext = await graphState.readWikiPage(n.wikiTitle, this);
+        contextBuffer.writeln("\n>>> CURRENT WIKI PAGE STATE: '${n.wikiTitle}' <<<\n$wikiContext\n>>> END WIKI PAGE STATE <<<\n");
+        continue;
+      }
+
       if (n.type == NodeType.briefing) {
         final briefingContext = await redleafService.fetchSystemBriefing();
         contextBuffer.writeln("\n>>> REDLEAF SYSTEM BRIEFING <<<\n$briefingContext");
@@ -533,7 +545,6 @@ If nothing relevant is found, return "Nothing relevant." """;
       int maxSteps = 3; 
       
       for (int step = 1; step <= maxSteps; step++) {
-        // Check flag
         if (_isForceAnswerTriggered) {
           node.chatHistory.last["content"] = "🤖 Agent: Moving to synthesis...";
           graphState.notifyListeners();
@@ -562,8 +573,6 @@ Return JSON ONLY:
           final decision = _parseAgentJSON(jsonDecode(await thinkRes.stream.bytesToString())['response']);
           
           if (decision['action'] == 'finish' || (decision['query'] ?? '').isEmpty) break;
-          
-          // Check flag
           if (_isForceAnswerTriggered) break;
 
           final query = decision['query'];
@@ -571,8 +580,6 @@ Return JSON ONLY:
           graphState.notifyListeners();
           
           final searchContext = await redleafService.fetchFtsContext(query);
-          
-          // Check flag
           if (_isForceAnswerTriggered) break;
 
           node.chatHistory.last["content"] = "🤖 Agent: Reading documents and taking notes..."; 
@@ -600,10 +607,11 @@ Preserve [Doc X] citations. If nothing relevant is found, return "Nothing releva
       }
     }
 
-    // --- MODIFIED: Inject Persona into Chat Instructions ---
+    final currentDate = DateTime.now().toString().split('.')[0];
     if (customPersona.isNotEmpty) {
       systemInstructions = "YOUR ACTIVE PERSONA: $customPersona\n\n$systemInstructions\nYou MUST adopt this persona completely in your writing style, tone, and perspective.";
     }
+    systemInstructions = "CURRENT SYSTEM TIME: $currentDate\n\n$systemInstructions";
 
     // 4. Structure the API Payload
     List<Map<String, String>> apiMessages = [
@@ -651,24 +659,30 @@ Preserve [Doc X] citations. If nothing relevant is found, return "Nothing releva
   }
 
   // --- DEEP STUDY PIPELINE ("GEEK OUT" NODE) ---
-  Future<void> triggerStudyLoop(StoryNode node, List<StoryNode> sequence) async {
+  Future<void> triggerStudyLoop(StoryNode node, List<StoryNode> sequence, GraphState graphState) async {
     _generatingNodeId = node.id;
-    _isForceAnswerTriggered = false; // Reset flag
+    _isForceAnswerTriggered = false; 
     node.ollamaResult = "🤖 Agent: Gathering upstream context...\n";
     notifyListeners();
 
     StringBuffer upstreamContext = StringBuffer();
     String objective = node.content.isNotEmpty ? node.content : "Conduct a comprehensive study based on the provided context.";
     
-    // --- ADDED: Persona Extraction ---
     String customPersona = "";
 
     // 1. Gather Context from the upstream chain
     for (var n in sequence) {
-      if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study) continue;
+      if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study || n.type == NodeType.summarize || n.type == NodeType.wikiWriter) continue;
       
       if (n.type == NodeType.persona) {
         customPersona = n.content.trim();
+        continue;
+      }
+
+      if (n.type == NodeType.wikiReader && n.wikiTitle.isNotEmpty) {
+        upstreamContext.writeln("\n>>> CURRENT WIKI PAGE STATE: '${n.wikiTitle}' <<<");
+        upstreamContext.writeln(await graphState.readWikiPage(n.wikiTitle, this));
+        upstreamContext.writeln(">>> END WIKI PAGE STATE <<<\n");
         continue;
       }
       
@@ -712,7 +726,6 @@ Preserve [Doc X] citations. If nothing relevant is found, return "Nothing releva
     node.ollamaResult = "🤖 Agent: Initiating Deep Study on '$objective'...\n"; notifyListeners();
 
     for (int step = 1; step <= maxSteps; step++) {
-      // Check flag
       if (_isForceAnswerTriggered) {
         node.ollamaResult += "\n> [User Override] Skipping remaining research steps. Moving to synthesis.\n";
         notifyListeners();
@@ -757,7 +770,6 @@ Return JSON ONLY:
           break;
         }
         
-        // Check flag
         if (_isForceAnswerTriggered) break;
 
         node.ollamaResult += "> Action: Searching Redleaf for '$query'...\n"; notifyListeners();
@@ -768,7 +780,6 @@ Return JSON ONLY:
           continue;
         }
         
-        // Check flag
         if (_isForceAnswerTriggered) break;
 
         node.ollamaResult += "> Action: Extracting relevant facts...\n"; notifyListeners();
@@ -808,11 +819,12 @@ Write a comprehensive, professional report on this topic using ONLY the provided
 Include inline citations like [Doc X] when stating facts derived from the research. 
 Structure with an Executive Summary, Detailed Findings, and a Conclusion.""";
 
-    // --- MODIFIED: Inject Persona into Study Report ---
+    final currentDate = DateTime.now().toString().split('.')[0];
     String systemInstruction = "You are a factual reporting agent.";
     if (customPersona.isNotEmpty) {
       systemInstruction = "YOUR ACTIVE PERSONA: $customPersona\n\nYou MUST adopt this persona completely in your writing style, tone, and perspective.";
     }
+    systemInstruction = "CURRENT SYSTEM TIME: $currentDate\n\n$systemInstruction";
 
     try {
       final response = await http.Client().send(http.Request('POST', Uri.parse('$_ollamaUrl/api/generate'))
@@ -836,6 +848,234 @@ Structure with an Executive Summary, Detailed Findings, and a Conclusion.""";
     } catch (e) { 
       node.ollamaResult = "⚠️ Failed to generate report.\nError details: $e"; 
       _generatingNodeId = null; _isForceAnswerTriggered = false; notifyListeners(); 
+    }
+  }
+
+  // --- DIRECT PROMPT / SUMMARIZER PIPELINE ---
+  Future<void> triggerSummarizeGeneration(StoryNode node, List<StoryNode> sequence, GraphState graphState) async {
+    _generatingNodeId = node.id; 
+    node.ollamaResult = "🤖 Gathering upstream context...\n"; notifyListeners();
+
+    StringBuffer upstreamContext = StringBuffer();
+    String customPersona = "";
+    
+    for (var n in sequence) {
+      if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study || n.type == NodeType.summarize || n.type == NodeType.wikiWriter) continue;
+      
+      if (n.type == NodeType.persona) {
+        customPersona = n.content.trim();
+        continue;
+      }
+
+      if (n.type == NodeType.wikiReader && n.wikiTitle.isNotEmpty) {
+        upstreamContext.writeln("\n>>> CURRENT WIKI PAGE STATE: '${n.wikiTitle}' <<<");
+        upstreamContext.writeln(await graphState.readWikiPage(n.wikiTitle, this));
+        upstreamContext.writeln(">>> END WIKI PAGE STATE <<<\n");
+        continue;
+      }
+      
+      if (n.type == NodeType.briefing) {
+        upstreamContext.writeln("\n>>> REDLEAF SYSTEM BRIEFING <<<");
+        upstreamContext.writeln(await redleafService.fetchSystemBriefing());
+        if (n.content.trim().isNotEmpty) upstreamContext.writeln("\n[USER OVERRIDE / MANUAL CONTEXT]:\n${n.content.trim()}");
+        upstreamContext.writeln(">>> END REDLEAF BRIEFING <<<\n");
+      } else if (n.type == NodeType.search && n.content.isNotEmpty) {
+        upstreamContext.writeln("\n>>> REDLEAF GLOBAL SEARCH: '${n.content}' <<<");
+        upstreamContext.writeln(await redleafService.fetchAdvancedFtsContext(n.content, n.searchLimit, n.pinnedSearchResults));
+        upstreamContext.writeln(">>> END REDLEAF SEARCH <<<\n");
+      } else if (n.type == NodeType.document && n.content.isNotEmpty) {
+        upstreamContext.writeln("\n>>> REDLEAF DOCUMENT <<<");
+        upstreamContext.writeln(await redleafService.fetchDocumentText(n.content));
+        upstreamContext.writeln(">>> END REDLEAF DOCUMENT <<<\n");
+      } else if (n.type == NodeType.catalog && n.content.isNotEmpty) {
+        final catId = int.tryParse(n.content);
+        if (catId != null) {
+          upstreamContext.writeln("\n>>> REDLEAF CATALOG <<<");
+          upstreamContext.writeln(await redleafService.fetchCatalogContext(catId, n.title));
+          upstreamContext.writeln(">>> END REDLEAF CATALOG <<<\n");
+        }
+      } else if (n.type == NodeType.intersection && n.redleafPills.isNotEmpty) {
+        upstreamContext.writeln("\n>>> REDLEAF CO-MENTIONS <<<");
+        upstreamContext.writeln(await redleafService.fetchIntersectionContext(n.redleafPills.map((p) => p.text).toList()));
+        upstreamContext.writeln(">>> END REDLEAF CO-MENTIONS <<<\n");
+      } else if (n.type == NodeType.relationship && n.redleafPills.isNotEmpty) {
+        upstreamContext.writeln("\n>>> REDLEAF GRAPH <<<");
+        upstreamContext.writeln(await redleafService.fetchEntityRelationships(n.redleafPills.first.entityId, n.redleafPills.first.text));
+        upstreamContext.writeln(">>> END REDLEAF GRAPH <<<\n");
+      } else if (n.type == NodeType.scene) {
+        upstreamContext.writeln("\n=== [USER NOTE: ${n.title}] ===\n${n.content}\n");
+        for (var pill in n.redleafPills) {
+          upstreamContext.writeln(await redleafService.fetchContextForPill(pill));
+        }
+      }
+    }
+
+    node.ollamaResult = "🤖 Generating response...\n\n"; notifyListeners();
+    
+    String userInstructions = node.ollamaPrompt.isNotEmpty 
+        ? node.ollamaPrompt 
+        : "Please provide a comprehensive and detailed summary of the following context material.";
+
+    String fullPayload = "$userInstructions\n\nCONTEXT TO PROCESS:\n${upstreamContext.isEmpty ? "None" : upstreamContext.toString()}";
+
+    final currentDate = DateTime.now().toString().split('.')[0];
+    String systemInstruction = "You are a helpful and analytical AI assistant.";
+    if (customPersona.isNotEmpty) {
+      systemInstruction = "YOUR ACTIVE PERSONA: $customPersona\n\nYou MUST adopt this persona completely in your writing style, tone, and perspective.";
+    }
+    systemInstruction = "CURRENT SYSTEM TIME: $currentDate\n\n$systemInstruction";
+
+    try {
+      final response = await http.Client().send(http.Request('POST', Uri.parse('$_ollamaUrl/api/generate'))
+        ..headers['Content-Type'] = 'application/json'
+        ..body = jsonEncode({ "model": _ollamaModel, "prompt": fullPayload, "system": systemInstruction, "stream": true }));
+      
+      response.stream.transform(utf8.decoder).transform(const LineSplitter()).listen(
+        (line) { 
+          if (line.isNotEmpty) { 
+            try { 
+              bool isFirstToken = node.ollamaResult.contains("🤖 Generating response...\n\n");
+              if (isFirstToken) node.ollamaResult = ""; 
+              node.ollamaResult += jsonDecode(line)['response'] ?? ''; 
+              notifyListeners(); 
+            } catch (e) {} 
+          } 
+        },
+        onDone: () { _generatingNodeId = null; notifyListeners(); }, 
+        onError: (e) { node.ollamaResult += "\n\n[Stream Error: $e]"; _generatingNodeId = null; notifyListeners(); } 
+      );
+    } catch (e) { 
+      node.ollamaResult = "⚠️ Failed to connect to Ollama.\nError details: $e"; 
+      _generatingNodeId = null; notifyListeners(); 
+    }
+  }
+
+  // --- NEW: WIKI WRITER PIPELINE ---
+  Future<void> triggerWikiWriterGeneration(StoryNode node, List<StoryNode> sequence, GraphState graphState) async {
+    _generatingNodeId = node.id; 
+    _isForceAnswerTriggered = false;
+    node.ollamaResult = "🤖 Gathering upstream context and reading Wiki...\n"; 
+    notifyListeners();
+
+    StringBuffer upstreamContext = StringBuffer();
+    String customPersona = "";
+
+    // 1. Gather Context
+    for (var n in sequence) {
+       if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study || n.type == NodeType.summarize || n.type == NodeType.wikiWriter) continue;
+       
+       if (n.type == NodeType.persona) {
+          customPersona = n.content.trim();
+          continue;
+       }
+
+       if (n.type == NodeType.wikiReader && n.wikiTitle.isNotEmpty) {
+          upstreamContext.writeln("\n>>> CURRENT WIKI PAGE STATE: '${n.wikiTitle}' <<<");
+          upstreamContext.writeln(await graphState.readWikiPage(n.wikiTitle, this));
+          upstreamContext.writeln(">>> END WIKI PAGE STATE <<<\n");
+          continue;
+       }
+
+       // ADDED THIS BLOCK: Ingest the Deep Study output!
+       if (n.type == NodeType.study && n.ollamaResult.isNotEmpty) {
+         upstreamContext.writeln("\n>>> FACTUAL CONTEXT FROM DEEP STUDY: '${n.content}' <<<");
+         upstreamContext.writeln(n.ollamaResult);
+         upstreamContext.writeln(">>> END DEEP STUDY <<<\n");
+         continue;
+       }
+       
+       // ADDED THIS BLOCK: Ingest Chat history if present
+       if (n.type == NodeType.chat && n.chatHistory.isNotEmpty) {
+         upstreamContext.writeln("\n>>> CONTEXT FROM CHAT LOG <<<");
+         for (var msg in n.chatHistory) {
+           upstreamContext.writeln("${(msg['role'] ?? 'unknown').toUpperCase()}: ${msg['content']}");
+         }
+         upstreamContext.writeln(">>> END CHAT LOG <<<\n");
+         continue;
+       }
+
+       // Add standard context
+       if (n.type == NodeType.briefing) {
+         upstreamContext.writeln("\n>>> REDLEAF SYSTEM BRIEFING <<<\n${await redleafService.fetchSystemBriefing()}\n>>> END REDLEAF BRIEFING <<<\n");
+       } else if (n.type == NodeType.search && n.content.isNotEmpty) {
+         upstreamContext.writeln("\n>>> REDLEAF GLOBAL SEARCH: '${n.content}' <<<\n${await redleafService.fetchAdvancedFtsContext(n.content, n.searchLimit, n.pinnedSearchResults)}\n>>> END REDLEAF SEARCH <<<\n");
+       } else if (n.type == NodeType.document && n.content.isNotEmpty) {
+         upstreamContext.writeln("\n>>> REDLEAF DOCUMENT <<<\n${await redleafService.fetchDocumentText(n.content)}\n>>> END REDLEAF DOCUMENT <<<\n");
+       } else if (n.type == NodeType.catalog && n.content.isNotEmpty) {
+         final catId = int.tryParse(n.content);
+         if (catId != null) upstreamContext.writeln("\n>>> REDLEAF CATALOG <<<\n${await redleafService.fetchCatalogContext(catId, n.title)}\n>>> END REDLEAF CATALOG <<<\n");
+       } else if (n.type == NodeType.intersection && n.redleafPills.isNotEmpty) {
+         upstreamContext.writeln("\n>>> REDLEAF CO-MENTIONS <<<\n${await redleafService.fetchIntersectionContext(n.redleafPills.map((p) => p.text).toList())}\n>>> END REDLEAF CO-MENTIONS <<<\n");
+       } else if (n.type == NodeType.relationship && n.redleafPills.isNotEmpty) {
+         upstreamContext.writeln("\n>>> REDLEAF GRAPH <<<\n${await redleafService.fetchEntityRelationships(n.redleafPills.first.entityId, n.redleafPills.first.text)}\n>>> END REDLEAF GRAPH <<<\n");
+       } else if (n.type == NodeType.scene) {
+         upstreamContext.writeln("\n=== [USER NOTE: ${n.title}] ===\n${n.content}\n");
+         for (var pill in n.redleafPills) upstreamContext.writeln(await redleafService.fetchContextForPill(pill));
+       }
+    }
+
+    node.ollamaResult = "🤖 Editing Wiki Page...\n\n"; notifyListeners();
+    
+    String userInstructions = node.ollamaPrompt.isNotEmpty 
+        ? node.ollamaPrompt 
+        : "Review the CURRENT WIKI PAGE STATE and the NEW RESEARCH. Update the wiki page.";
+
+    String fullPayload = "$userInstructions\n\nCONTEXT TO PROCESS:\n${upstreamContext.isEmpty ? "None" : upstreamContext.toString()}";
+
+    final currentDate = DateTime.now().toString().split('.')[0];
+    
+    // Strict Wikipedia Editor Prompt
+    String systemInstruction = '''You are an expert Wikipedia Editor and Fact Checker.
+Your task is to rewrite, expand, and format the target wiki page to seamlessly incorporate new facts from the provided context.
+
+RULES:
+1. If the new research agrees with the current wiki, seamlessly expand the article.
+2. If the new research CONTRADICTS the current wiki, you MUST preserve the controversy. Do not erase the old claim; instead, write: 'While previous documents suggested X, newly analyzed [Doc Y] indicates Z.'
+3. You MUST include inline citations like [Doc X] when adding new facts based on the REDLEAF context.
+4. You MUST append a bullet point to the '### Revision History' section at the bottom of the file detailing exactly what you changed today and why. (Create this section if it doesn't exist).
+5. Output ONLY valid Markdown. Do NOT wrap your response in markdown code blocks (e.g., no ```markdown). Output the raw text directly.''';
+
+    if (customPersona.isNotEmpty) {
+      systemInstruction = "YOUR ACTIVE PERSONA: $customPersona\n\n$systemInstruction\nYou MUST adopt this persona completely in your writing style, tone, and perspective while adhering to the editing rules.";
+    }
+    systemInstruction = "CURRENT SYSTEM TIME: $currentDate\n\n$systemInstruction";
+
+    try {
+      final response = await http.Client().send(http.Request('POST', Uri.parse('$_ollamaUrl/api/generate'))
+        ..headers['Content-Type'] = 'application/json'
+        ..body = jsonEncode({ "model": _ollamaModel, "prompt": fullPayload, "system": systemInstruction, "stream": true }));
+      
+      response.stream.transform(utf8.decoder).transform(const LineSplitter()).listen(
+        (line) { 
+          if (line.isNotEmpty) { 
+            try { 
+              bool isFirstToken = node.ollamaResult.contains("🤖 Editing Wiki Page...\n\n");
+              if (isFirstToken) node.ollamaResult = ""; 
+              node.ollamaResult += jsonDecode(line)['response'] ?? ''; 
+              notifyListeners(); 
+            } catch (e) {} 
+          } 
+        },
+        onDone: () async { 
+          _generatingNodeId = null; 
+          notifyListeners(); 
+          
+          // --- WRITE RESULT TO MARKDOWN FILE ---
+          if (node.wikiTitle.isNotEmpty && node.ollamaResult.isNotEmpty) {
+              bool success = await graphState.writeWikiPage(node.wikiTitle, node.ollamaResult.trim(), this);
+              if (success) {
+                  node.ollamaResult += "\n\n[System: Successfully saved to Wiki/${node.wikiTitle}.md]";
+              } else {
+                  node.ollamaResult += "\n\n[System Error: Failed to save to Wiki/${node.wikiTitle}.md]";
+              }
+              notifyListeners();
+          }
+        }, 
+        onError: (e) { node.ollamaResult += "\n\n[Stream Error: $e]"; _generatingNodeId = null; notifyListeners(); } 
+      );
+    } catch (e) { 
+      node.ollamaResult = "⚠️ Failed to connect to Ollama.\nError details: $e"; 
+      _generatingNodeId = null; notifyListeners(); 
     }
   }
 }

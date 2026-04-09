@@ -34,9 +34,12 @@ class StoryNode {
   bool enableAutonomousResearch; 
   List<Map<String, String>> chatHistory; 
   
-  // --- NEW: Global Search Configurations ---
+  // --- Global Search Configurations ---
   int searchLimit;
   List<Map<String, dynamic>> pinnedSearchResults;
+
+  // --- NEW: Agentic Wiki Configuration ---
+  String wikiTitle;
 
   StoryNode({
     required this.id, required this.position, this.type = NodeType.scene,
@@ -46,12 +49,13 @@ class StoryNode {
     this.ollamaPrompt = "", this.ollamaResult = "", this.ollamaNoBacktalk = true,
     this.enableAutonomousResearch = true,
     List<Map<String, String>>? chatHistory, 
-    this.searchLimit = 5, // <-- Added
-    List<Map<String, dynamic>>? pinnedSearchResults, // <-- Added
+    this.searchLimit = 5, 
+    List<Map<String, dynamic>>? pinnedSearchResults, 
+    this.wikiTitle = "", // <-- Added
   }) : nextNodeIds = nextNodeIds ?? [],
        redleafPills = redleafPills ?? [],
        chatHistory = chatHistory ?? [],
-       pinnedSearchResults = pinnedSearchResults ?? []; // <-- Added
+       pinnedSearchResults = pinnedSearchResults ?? []; 
 
   // True for tools/actions, False for Scratchpad (which shows text preview)
   bool get isCompactToolNode => type != NodeType.scene;
@@ -74,8 +78,9 @@ class StoryNode {
     'ollamaNoBacktalk': ollamaNoBacktalk,
     'enableAutonomousResearch': enableAutonomousResearch,
     'chatHistory': chatHistory, 
-    'searchLimit': searchLimit, // <-- Added
-    'pinnedSearchResults': pinnedSearchResults, // <-- Added
+    'searchLimit': searchLimit, 
+    'pinnedSearchResults': pinnedSearchResults, 
+    'wikiTitle': wikiTitle, // <-- Added
   };
 
   factory StoryNode.fromJson(Map<String, dynamic> json) {
@@ -89,7 +94,10 @@ class StoryNode {
     if (json['type'] == 'NodeType.chat') parsedType = NodeType.chat; 
     if (json['type'] == 'NodeType.briefing') parsedType = NodeType.briefing; 
     if (json['type'] == 'NodeType.study') parsedType = NodeType.study;
-    if (json['type'] == 'NodeType.persona') parsedType = NodeType.persona; // <-- ADDED
+    if (json['type'] == 'NodeType.persona') parsedType = NodeType.persona;
+    if (json['type'] == 'NodeType.summarize') parsedType = NodeType.summarize; 
+    if (json['type'] == 'NodeType.wikiReader') parsedType = NodeType.wikiReader; // <-- Added
+    if (json['type'] == 'NodeType.wikiWriter') parsedType = NodeType.wikiWriter; // <-- Added
 
     return StoryNode(
       id: json['id'],
@@ -106,10 +114,11 @@ class StoryNode {
       chatHistory: (json['chatHistory'] as List?)
           ?.map((e) => Map<String, String>.from(e as Map))
           .toList() ?? [], 
-      searchLimit: json['searchLimit'] ?? 5, // <-- Added
+      searchLimit: json['searchLimit'] ?? 5, 
       pinnedSearchResults: (json['pinnedSearchResults'] as List?)
           ?.map((e) => Map<String, dynamic>.from(e as Map))
-          .toList() ?? [], // <-- Added
+          .toList() ?? [], 
+      wikiTitle: json['wikiTitle'] ?? "", // <-- Added
     );
   }
 

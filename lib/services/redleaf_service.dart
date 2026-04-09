@@ -10,6 +10,7 @@ class RedleafService {
   String apiUrl = "http://127.0.0.1:5000";
   String username = "";
   String password = "";
+  String redleafBaseDir = ""; // <-- ADDED
   
   String _cookie = "";
   String _csrfToken = "";
@@ -83,6 +84,7 @@ class RedleafService {
       );
       if (res.statusCode == 200) {
         final data = _safeJsonDecode(res);
+        redleafBaseDir = data['base_dir'] ?? ""; // <-- ADDED
         return data['instance_id'];
       }
     } catch (e) {
@@ -250,22 +252,49 @@ class RedleafService {
     return output;
   }
 
-  Future<String> fetchDocumentText(String docIdStr) async {
+  Future<String> fetchDocumentText(String inputStr) async {
     if (!await _ensureAuth()) return "[Auth Error: Not connected to Redleaf]";
     try {
-      int? docId = int.tryParse(docIdStr.trim());
-      if (docId == null) return "[Invalid Document ID: $docIdStr]";
-      final res = await http.get(Uri.parse('$apiUrl/api/document/$docId/text'), headers: {'Cookie': _cookie});
+      int? docId;
+      int? startPage;
+      int? endPage;
+
+      // Parse syntax: "12" or "id:12 + page:1-3" or "id:12 + page:4"
+      final match = RegExp(r'(?:id:\s*)?(\d+)(?:\s*\+\s*page:\s*(\d+)(?:-(\d+))?)?', caseSensitive: false).firstMatch(inputStr.trim());
+      
+      if (match != null) {
+        docId = int.tryParse(match.group(1) ?? '');
+        if (match.group(2) != null) {
+          startPage = int.tryParse(match.group(2)!);
+          if (match.group(3) != null) {
+            endPage = int.tryParse(match.group(3)!);
+          } else {
+            endPage = startPage;
+          }
+        }
+      } else {
+        docId = int.tryParse(inputStr.trim());
+      }
+
+      if (docId == null) return "[Invalid Document Syntax: $inputStr]";
+
+      String url = '$apiUrl/api/document/$docId/text';
+      List<String> queryParams = [];
+      if (startPage != null) queryParams.add('start_page=$startPage');
+      if (endPage != null) queryParams.add('end_page=$endPage');
+      if (queryParams.isNotEmpty) url += '?${queryParams.join('&')}';
+
+      final res = await http.get(Uri.parse(url), headers: {'Cookie': _cookie});
       if (res.statusCode == 200) {
         final data = _safeJsonDecode(res);
         if (data['success'] == true) {
           String text = data['text'] ?? '';
           if (text.length > 4000) text = "${text.substring(0, 4000)}\n\n... [Document Truncated for AI Context] ...";
-          return "[Redleaf Raw Text for Document #$docId]:\n$text";
+          return "[Redleaf Raw Text for Document #$docId${startPage != null ? ' (Pages $startPage-$endPage)' : ''}]:\n$text";
         }
       }
     } catch (e) { debugPrint("Doc fetch error: $e"); }
-    return "[Error fetching Document #$docIdStr]";
+    return "[Error fetching Document data for input: $inputStr]";
   }
 
   Future<List<Map<String, dynamic>>> fetchAllCatalogs() async {

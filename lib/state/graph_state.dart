@@ -65,8 +65,22 @@ class GraphState extends ChangeNotifier {
   }
 
   Future<void> saveAsProject(NetworkState networkState) async {
+    String? initialDir;
+    if (networkState.redleafService.redleafBaseDir.isNotEmpty) {
+      final dir = Directory("${networkState.redleafService.redleafBaseDir}${Platform.pathSeparator}Node-leaf-saves");
+      if (!await dir.exists()) {
+        try { 
+          await dir.create(recursive: true); 
+        } catch (e) {
+          debugPrint("Could not create save directory: $e");
+        }
+      }
+      initialDir = dir.path;
+    }
+
     String? outputFile = await FilePicker.platform.saveFile(
       dialogTitle: 'Save Node Leaf Project', 
+      initialDirectory: initialDir, 
       fileName: '$_projectName.nlf', 
       type: FileType.custom, 
       allowedExtensions: ['nlf'],
@@ -81,7 +95,7 @@ class GraphState extends ChangeNotifier {
 
   Future<void> _writeToDisk(String path, NetworkState networkState) async {
     final Map<String, dynamic> projectData = {
-      'version': 27, 
+      'version': 28, // Incremented version for Wiki features
       'name': _projectName, 
       'ollama_url': networkState.ollamaUrl, 
       'ollama_model': networkState.ollamaModel, 
@@ -99,8 +113,18 @@ class GraphState extends ChangeNotifier {
   }
 
   Future<void> loadProject(NetworkState networkState) async {
+    String? initialDir;
+    if (networkState.redleafService.redleafBaseDir.isNotEmpty) {
+      final dir = Directory("${networkState.redleafService.redleafBaseDir}${Platform.pathSeparator}Node-leaf-saves");
+      if (await dir.exists()) {
+        initialDir = dir.path;
+      }
+    }
+
     FilePickerResult? result = await FilePicker.platform.pickFiles(
-      type: FileType.custom, allowedExtensions: ['nlf', 'nw'],
+      type: FileType.custom, 
+      allowedExtensions: ['nlf', 'nw'],
+      initialDirectory: initialDir,
     );
     if (result != null && result.files.single.path != null) {
       final path = result.files.single.path!;
@@ -143,6 +167,119 @@ class GraphState extends ChangeNotifier {
     }
   }
 
+  // --- WIKI FILE MANAGEMENT (NEW) ---
+
+  Future<Directory?> _getWikiDirectory(NetworkState networkState) async {
+    final baseDir = networkState.redleafService.redleafBaseDir;
+    if (baseDir.isEmpty) return null;
+    final dir = Directory("$baseDir${Platform.pathSeparator}Node-leaf-saves${Platform.pathSeparator}Wiki");
+    if (!await dir.exists()) {
+      try {
+        await dir.create(recursive: true);
+      } catch (e) {
+        debugPrint("Could not create Wiki directory: $e");
+        return null;
+      }
+    }
+    return dir;
+  }
+
+  Future<String> readWikiPage(String title, NetworkState networkState) async {
+    if (title.trim().isEmpty) return "Error: Wiki title is empty.";
+    final dir = await _getWikiDirectory(networkState);
+    if (dir == null) return "Error: Could not locate Redleaf base directory to find Wiki folder. Ensure you are connected to Redleaf.";
+    
+    final safeTitle = title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').replaceAll(' ', '_');
+    final file = File("${dir.path}${Platform.pathSeparator}$safeTitle.md");
+    
+    if (await file.exists()) {
+      try {
+        return await file.readAsString();
+      } catch (e) {
+        return "Error reading wiki page: $e";
+      }
+    } else {
+      return "This page is currently empty. You are writing the first draft.";
+    }
+  }
+
+  Future<void> _createWikiBackup(String title, NetworkState networkState) async {
+    final dir = await _getWikiDirectory(networkState);
+    if (dir == null) return;
+    
+    final safeTitle = title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').replaceAll(' ', '_');
+    final originalFile = File("${dir.path}${Platform.pathSeparator}$safeTitle.md");
+    
+    if (await originalFile.exists()) {
+      try {
+        final historyDir = Directory("${dir.path}${Platform.pathSeparator}.history");
+        if (!await historyDir.exists()) {
+          await historyDir.create(recursive: true);
+        }
+        
+        final now = DateTime.now();
+        final timestamp = "${now.year}${now.month.toString().padLeft(2,'0')}${now.day.toString().padLeft(2,'0')}_${now.hour.toString().padLeft(2,'0')}${now.minute.toString().padLeft(2,'0')}${now.second.toString().padLeft(2,'0')}";
+        
+        final backupFile = File("${historyDir.path}${Platform.pathSeparator}${safeTitle}_$timestamp.md");
+        await originalFile.copy(backupFile.path);
+        debugPrint("Wiki backup created at: ${backupFile.path}");
+      } catch (e) {
+        debugPrint("Failed to create wiki backup: $e");
+      }
+    }
+  }
+
+  Future<bool> writeWikiPage(String title, String content, NetworkState networkState) async {
+    if (title.trim().isEmpty) return false;
+    final dir = await _getWikiDirectory(networkState);
+    if (dir == null) return false;
+    
+    // Backup the existing file first for Git-style history
+    await _createWikiBackup(title, networkState);
+    
+    final safeTitle = title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').replaceAll(' ', '_');
+    final file = File("${dir.path}${Platform.pathSeparator}$safeTitle.md");
+    
+    try {
+      await file.writeAsString(content);
+      debugPrint("Wiki page written to: ${file.path}");
+      return true;
+    } catch (e) {
+      debugPrint("Failed to write wiki page: $e");
+      return false;
+    }
+  }
+
+  void updateWikiTitle(String id, String title) {
+    if (_nodes.containsKey(id) && _nodes[id]!.wikiTitle != title) {
+      requestUndoSnapshot();
+      _nodes[id]!.wikiTitle = title;
+      notifyListeners();
+    }
+  }
+
+  Future<List<String>> listWikiPages(NetworkState networkState) async {
+    final dir = await _getWikiDirectory(networkState);
+    if (dir == null) return [];
+    
+    List<String> pages = [];
+    try {
+      final entities = dir.listSync();
+      for (var entity in entities) {
+        if (entity is File && entity.path.endsWith('.md')) {
+          final filename = entity.path.split(Platform.pathSeparator).last;
+          final title = filename.substring(0, filename.length - 3);
+          pages.add(title);
+        }
+      }
+      pages.sort(); 
+      return pages;
+    } catch (e) {
+      debugPrint("Error listing wiki pages: $e");
+      return [];
+    }
+  }
+
   // --- NODE CRUD & SELECTION ---
 
   void addNode(Offset centerPos, [NodeType type = NodeType.scene]) {
@@ -159,6 +296,9 @@ class GraphState extends ChangeNotifier {
     if (type == NodeType.briefing) title = "System Briefing";
     if (type == NodeType.persona) title = "Agent Persona"; 
     if (type == NodeType.study) title = "Deep Study"; 
+    if (type == NodeType.summarize) title = "Summarizer";
+    if (type == NodeType.wikiReader) title = "Wiki Reader"; 
+    if (type == NodeType.wikiWriter) title = "Wiki Writer"; 
 
     _nodes[id] = StoryNode(id: id, position: centerPos - const Offset(kNodeWidth / 2, kNodeHeight / 2), title: title, type: type);
     _selectedNodeIds = {id};
@@ -332,7 +472,7 @@ class GraphState extends ChangeNotifier {
       List<String> nextIds = []; 
       if (data['next_ids'] != null) { 
         for (var id in List<String>.from(data['next_ids'])) { 
-          if (_nodes[id]?.type != NodeType.output) nextIds.add(id); 
+          if (_nodes[id]?.type != NodeType.output && _nodes[id]?.type != NodeType.wikiWriter) nextIds.add(id); 
         } 
       } 
       final newNode = StoryNode.fromJson(data)..position = newPos..nextNodeIds = nextIds; 
@@ -349,14 +489,18 @@ class GraphState extends ChangeNotifier {
     _nodeSequence.clear(); 
     _activePathIds.clear();
     List<StoryNode> targetNodes = _nodes.values.where((n) => 
-      n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study
+      n.type == NodeType.output || 
+      n.type == NodeType.chat || 
+      n.type == NodeType.study || 
+      n.type == NodeType.summarize ||
+      n.type == NodeType.wikiWriter
     ).toList();
+    
     if (targetNodes.isEmpty) return;
 
     Map<String, String> parents = {};
     for (var node in _nodes.values) { 
       for (var childId in node.nextNodeIds) { 
-        // THIS IS THE FIX: Changed n.id to node.id
         if (!parents.containsKey(childId) || node.nextNodeIds.indexOf(childId) == 0) parents[childId] = node.id; 
       } 
     }
@@ -381,7 +525,15 @@ class GraphState extends ChangeNotifier {
   List<StoryNode> getCompiledNodes([String? targetId]) {
     String? curr = targetId ?? _previewNodeId;
     if (curr == null) { 
-      try { curr = _nodes.values.firstWhere((n) => n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study).id; } 
+      try { 
+        curr = _nodes.values.firstWhere((n) => 
+          n.type == NodeType.output || 
+          n.type == NodeType.chat || 
+          n.type == NodeType.study || 
+          n.type == NodeType.summarize ||
+          n.type == NodeType.wikiWriter
+        ).id; 
+      } 
       catch (_) { return []; } 
     }
     

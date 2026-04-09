@@ -56,9 +56,12 @@ class _NodeCanvasState extends State<NodeCanvas> {
                 PopupMenuItem(value: NodeType.intersection, child: Text("🎯 Add Co-Mention")),
                 PopupMenuItem(value: NodeType.briefing, child: Text("🗺️ Add System Briefing")),
                 PopupMenuItem(value: NodeType.persona, child: Text("🎭 Add Agent Persona")),
+                PopupMenuItem(value: NodeType.wikiReader, child: Text("📘 Add Wiki Reader")),
                 PopupMenuItem(value: NodeType.study, child: Text("🤓 Add Deep Study (Geek Out)")),
+                PopupMenuItem(value: NodeType.summarize, child: Text("📝 Add Summarizer (Simple)")),
                 PopupMenuItem(value: NodeType.output, child: Text("✨ Add Ollama Output")),
                 PopupMenuItem(value: NodeType.chat, child: Text("💬 Add Ollama Chat Node")),
+                PopupMenuItem(value: NodeType.wikiWriter, child: Text("🖋️ Add Wiki Writer")),
               ],
             ).then((type) {
               if (type != null) graphState.addNode(canvasPos, type);
@@ -109,7 +112,6 @@ class ConnectionsLayer extends StatelessWidget {
   const ConnectionsLayer({super.key});
   @override
   Widget build(BuildContext context) {
-    // We need to listen to both the Graph (for nodes) and the Canvas (for dragging wires)
     return Consumer2<GraphState, CanvasState>(
       builder: (context, graphState, canvasState, _) => CustomPaint(
         size: Size.infinite, 
@@ -202,6 +204,21 @@ class _NodeVisualState extends State<NodeVisual> {
         displayTitle = node.content.isEmpty ? "DEEP STUDY" : "STUDY: ${node.content}";
         iconColor = Colors.deepPurpleAccent;
         break;
+      case NodeType.summarize: 
+        iconData = Icons.format_align_left;
+        displayTitle = "SUMMARIZER";
+        iconColor = Colors.orange;
+        break;
+      case NodeType.wikiReader: 
+        iconData = Icons.menu_book;
+        displayTitle = node.wikiTitle.isEmpty ? "WIKI READER" : "READ: ${node.wikiTitle}";
+        iconColor = Colors.lightBlueAccent;
+        break;
+      case NodeType.wikiWriter: 
+        iconData = Icons.edit_document;
+        displayTitle = node.wikiTitle.isEmpty ? "WIKI WRITER" : "WRITE: ${node.wikiTitle}";
+        iconColor = Colors.deepOrangeAccent;
+        break;
       default:
         iconData = Icons.extension;
         displayTitle = "TOOL";
@@ -211,7 +228,7 @@ class _NodeVisualState extends State<NodeVisual> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        if ((node.type == NodeType.output || node.type == NodeType.chat || node.type == NodeType.study) && isGenerating) 
+        if ((node.type == NodeType.output || node.type == NodeType.chat || node.type == NodeType.study || node.type == NodeType.summarize || node.type == NodeType.wikiWriter) && isGenerating) 
           const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
         else 
           Icon(iconData, size: 24, color: iconColor), 
@@ -277,14 +294,12 @@ class _NodeVisualState extends State<NodeVisual> {
 
   @override
   Widget build(BuildContext context) {
-    // Read references to avoid subscribing the whole widget to every tick
     final graphState = context.read<GraphState>();
     final canvasState = context.read<CanvasState>();
     
     final nodeId = widget.nodeId;
     final node = graphState.nodes[nodeId]!;
     
-    // Select specific values to listen to
     final isSelected = context.select<GraphState, bool>((s) => s.selectedNodeIds.contains(nodeId));
     final isActive = context.select<GraphState, bool>((s) => s.activePathIds.contains(nodeId));
     final isPreview = context.select<GraphState, bool>((s) => s.previewNodeId == nodeId);
@@ -294,7 +309,8 @@ class _NodeVisualState extends State<NodeVisual> {
     final isSwapTarget = context.select<CanvasState, bool>((s) => s.hoveredSwapTargetId == nodeId);
     final isCycleHover = context.select<CanvasState, bool>((s) => s.isInvalidCycle) && (isHoverTarget || isSwapTarget);
 
-    final bool isGenerating = context.select<NetworkState, bool>((s) => s.isNodeGenerating(nodeId)) && (node.type == NodeType.output || node.type == NodeType.chat || node.type == NodeType.study);
+    final bool isGenerating = context.select<NetworkState, bool>((s) => s.isNodeGenerating(nodeId)) && 
+      (node.type == NodeType.output || node.type == NodeType.chat || node.type == NodeType.study || node.type == NodeType.summarize || node.type == NodeType.wikiWriter);
     
     final double height = node.currentHeight;
     final double borderRadius = node.isCompactToolNode ? (height / 2) : 12.0;
@@ -389,8 +405,8 @@ class _NodeVisualState extends State<NodeVisual> {
                 ),
               ),
 
-              // Hide output wire handle for terminal nodes (Output, Chat, Study)
-              if (node.type != NodeType.output && node.type != NodeType.chat && node.type != NodeType.study)
+              // --- FIX: Output port is now visible for Deep Study and Summarize ---
+              if (node.type != NodeType.output && node.type != NodeType.chat && node.type != NodeType.wikiWriter)
                 Positioned(
                   bottom: -20, 
                   left: 0, right: 0, 
@@ -426,7 +442,7 @@ class _NodeVisualState extends State<NodeVisual> {
                   ),
                 ),
                 
-              if (node.type != NodeType.output && node.type != NodeType.chat && node.type != NodeType.study && node.nextNodeIds.length > 1)
+              if (node.type != NodeType.output && node.type != NodeType.chat && node.type != NodeType.wikiWriter && node.nextNodeIds.length > 1)
                 Positioned(
                   bottom: -12, right: 15,
                   child: Container(

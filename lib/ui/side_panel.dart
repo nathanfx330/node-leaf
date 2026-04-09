@@ -137,7 +137,10 @@ class _SidePanelState extends State<SidePanel> {
     if (node.type == NodeType.chat) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: ChatNodePanel(nodeId: node.id)); 
     if (node.type == NodeType.briefing) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: BriefingNodePanel(nodeId: node.id));
     if (node.type == NodeType.study) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: StudyNodePanel(nodeId: node.id)); 
-    if (node.type == NodeType.persona) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: PersonaNodePanel(nodeId: node.id)); // <-- ADDED THIS LINE
+    if (node.type == NodeType.summarize) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: SummarizeNodePanel(nodeId: node.id)); 
+    if (node.type == NodeType.persona) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: PersonaNodePanel(nodeId: node.id)); 
+    if (node.type == NodeType.wikiReader) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: WikiReaderNodePanel(nodeId: node.id)); 
+    if (node.type == NodeType.wikiWriter) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: WikiWriterNodePanel(nodeId: node.id)); 
 
     // Default: Scratchpad / Prompt Node
     return Container(
@@ -208,11 +211,10 @@ class _SidePanelState extends State<SidePanel> {
         children: [
           const Text("REDLEAF DOCUMENT READER", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
           const SizedBox(height: 20),
-          const Text("Redleaf Document ID:", style: TextStyle(color: Colors.white54, fontSize: 12)),
+          const Text("Enter a Document ID (e.g. 12) or specific pages (e.g. id:12 + page:1-3):", style: TextStyle(color: Colors.white54, fontSize: 12)), 
           const SizedBox(height: 5),
           TextField(
             controller: _contentCtrl, 
-            keyboardType: TextInputType.number,
             decoration: const InputDecoration(filled: true, fillColor: Color(0xFF222222), hintText: "e.g. 12"),
             onChanged: (v) => graphState.updateNodeContent(node.id, v),
           ),
@@ -240,7 +242,6 @@ class _SidePanelState extends State<SidePanel> {
 // PANELS FOR GRAPH / CATALOG / INTERSECTION / BRIEFING / PERSONA
 // ====================================================================
 
-// --- NEW: Persona Node Panel ---
 class PersonaNodePanel extends StatefulWidget {
   final String nodeId;
   const PersonaNodePanel({super.key, required this.nodeId});
@@ -315,7 +316,6 @@ class _PersonaNodePanelState extends State<PersonaNodePanel> {
     );
   }
 }
-
 
 class BriefingNodePanel extends StatefulWidget {
   final String nodeId;
@@ -642,7 +642,7 @@ class _GlobalSearchNodePanelState extends State<GlobalSearchNodePanel> {
   @override
   Widget build(BuildContext context) {
     final graphState = context.watch<GraphState>(); // Use watch to rebuild on pins
-    final networkState = context.watch<NetworkState>(); // --- NEW: To get API URL for links ---
+    final networkState = context.watch<NetworkState>(); // To get API URL for links
     final node = graphState.nodes[widget.nodeId];
     if (node == null) return const SizedBox.shrink();
 
@@ -681,7 +681,6 @@ class _GlobalSearchNodePanelState extends State<GlobalSearchNodePanel> {
           ),
           const SizedBox(height: 15),
           
-          // --- NEW: Search Limit controls ---
           Row(
             children: [
               const Icon(Icons.tune, color: Colors.white54, size: 16),
@@ -743,7 +742,6 @@ class _GlobalSearchNodePanelState extends State<GlobalSearchNodePanel> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                // --- FIXED: Clickable Title to open Redleaf Viewer ---
                                 MouseRegion(
                                   cursor: isError ? SystemMouseCursors.basic : SystemMouseCursors.click,
                                   child: GestureDetector(
@@ -752,8 +750,6 @@ class _GlobalSearchNodePanelState extends State<GlobalSearchNodePanel> {
                                       final docId = item['doc_id'];
                                       final pageNum = item['page_number'];
                                       final baseUrl = networkState.redleafService.apiUrl;
-                                      // Note: Using #page= for universal compatibility. 
-                                      // Redleaf web UI will route to SRT cues if necessary.
                                       final url = Uri.parse('$baseUrl/document/$docId#page=$pageNum');
                                       if (await canLaunchUrl(url)) {
                                         await launchUrl(url);
@@ -772,7 +768,6 @@ class _GlobalSearchNodePanelState extends State<GlobalSearchNodePanel> {
                                     ),
                                   ),
                                 ),
-                                // ----------------------------------------------------
                                 const SizedBox(height: 6),
                                 SelectableText(
                                   item['snippet'] ?? "", 
@@ -785,11 +780,9 @@ class _GlobalSearchNodePanelState extends State<GlobalSearchNodePanel> {
                             IconButton(
                               icon: Icon(isPinned ? Icons.push_pin : Icons.push_pin_outlined, color: isPinned ? Colors.amber : Colors.white54, size: 20),
                               onPressed: () {
-                                // Construct payload. We map doc_id and page_number to title and snippet 
-                                // to satisfy GraphState's existing identity check seamlessly.
                                 final payload = {
-                                  'doc_id': item['doc_id'], // Corrected to use actual doc_id
-                                  'page_number': item['page_number'], // Corrected to use actual page_number
+                                  'doc_id': item['doc_id'],
+                                  'page_number': item['page_number'],
                                   'title': item['title'],
                                   'snippet': item['snippet']
                                 };
@@ -909,7 +902,7 @@ class OutputNodePanel extends StatelessWidget {
           Expanded(
             child: TabBarView(
               children: [
-                const PreviewPanel(), 
+                PreviewPanel(targetNodeId: nodeId),
                 _OllamaInterface(nodeId: nodeId), 
               ],
             ),
@@ -993,12 +986,11 @@ class _OllamaInterfaceState extends State<_OllamaInterface> {
               label: Text(isThisGenerating ? "GENERATING..." : "RUN (${networkState.ollamaModel})"),
               onPressed: networkState.isGeneratingOllama ? null : () {
                 final sequence = graphState.getCompiledNodes(widget.nodeId);
-                networkState.triggerOllamaGeneration(node, sequence);
+                networkState.triggerOllamaGeneration(node, sequence, graphState); // Pass graphState
               },
             ),
           ),
           
-          // --- NEW: Force Answer Button ---
           if (isThisGenerating) ...[
             const SizedBox(height: 10),
             SizedBox(
@@ -1049,13 +1041,30 @@ class _OllamaInterfaceState extends State<_OllamaInterface> {
 }
 
 class PreviewPanel extends StatelessWidget {
-  const PreviewPanel({super.key});
+  final String? targetNodeId;
+  const PreviewPanel({super.key, this.targetNodeId});
 
   @override
   Widget build(BuildContext context) {
     final graphState = context.watch<GraphState>();
     final canvasState = context.read<CanvasState>();
-    final nodes = graphState.getCompiledNodes();
+    final nodes = graphState.getCompiledNodes(targetNodeId);
+
+    if (nodes.length <= 1) { 
+      return Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(15), color: const Color(0xFF222222), width: double.infinity,
+            child: const Text("COMPILED DATA", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+          const Expanded(
+            child: Center(
+              child: Text("No upstream data connected.", style: TextStyle(color: Colors.white54))
+            )
+          )
+        ]
+      );
+    }
 
     return Column(
       children:[
@@ -1082,11 +1091,18 @@ class PreviewPanel extends StatelessWidget {
             padding: const EdgeInsets.all(30), itemCount: nodes.length,
             itemBuilder: (ctx, i) {
               final node = nodes[i];
-              if (node.type == NodeType.output || node.type == NodeType.chat) return const SizedBox(height: 50, child: Divider(color: Colors.white24));
+              if (node.type == NodeType.output || node.type == NodeType.chat || node.type == NodeType.wikiWriter) return const SizedBox(height: 50, child: Divider(color: Colors.white24));
               
               final baseStyle = const TextStyle(fontSize: 16, height: 1.6, color: Colors.white70);
               final nodeIndex = graphState.getNodeIndex(node.id);
               final indexPrefix = nodeIndex > 0 ? "#$nodeIndex " : "";
+
+              String displayText = node.content;
+              if (node.type == NodeType.wikiReader) {
+                displayText = "File: ${node.wikiTitle}.md";
+              } else if (node.type == NodeType.study || node.type == NodeType.summarize) {
+                displayText = "Task: ${node.content}\n\n[Generated Result]:\n${node.ollamaResult.isEmpty ? 'Not run yet.' : node.ollamaResult}";
+              }
 
               return MouseRegion(
                 cursor: SystemMouseCursors.click,
@@ -1098,8 +1114,7 @@ class PreviewPanel extends StatelessWidget {
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children:[
                       Text((indexPrefix + node.title).toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 10, letterSpacing: 1.5, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 8),
-                      // Use SelectableText instead of Text.rich for plain text rendering
-                      SelectableText(node.content, style: baseStyle),
+                      SelectableText(displayText, style: baseStyle),
                       if (node.redleafPills.isNotEmpty) ...[
                         const SizedBox(height: 8),
                         Text("Attached Context: ${node.redleafPills.map((p) => p.text).join(', ')}", style: const TextStyle(color: Colors.white54, fontSize: 12, fontStyle: FontStyle.italic)),
@@ -1139,7 +1154,6 @@ class _ChatNodePanelState extends State<ChatNodePanel> {
     final networkState = context.read<NetworkState>();
     final graphState = context.read<GraphState>();
     
-    // Safety check: Prevent sending if another generation is already running globally
     if (networkState.isGeneratingOllama) return;
     
     final node = graphState.nodes[widget.nodeId]!;
@@ -1168,7 +1182,6 @@ class _ChatNodePanelState extends State<ChatNodePanel> {
 
     final bool isThisGenerating = networkState.isNodeGenerating(widget.nodeId);
 
-    // Auto-scroll on rebuild if user is at the bottom
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollCtrl.hasClients && _scrollCtrl.offset >= _scrollCtrl.position.maxScrollExtent - 50) {
         _scrollToBottom();
@@ -1177,7 +1190,6 @@ class _ChatNodePanelState extends State<ChatNodePanel> {
 
     return Column(
       children: [
-        // Header
         Container(
           padding: const EdgeInsets.all(15),
           decoration: const BoxDecoration(
@@ -1199,7 +1211,6 @@ class _ChatNodePanelState extends State<ChatNodePanel> {
           ),
         ),
 
-        // System Prompt & Toggles Field
         Container(
           color: const Color(0xFF1A1A1A),
           child: ExpansionTile(
@@ -1245,7 +1256,6 @@ class _ChatNodePanelState extends State<ChatNodePanel> {
           ),
         ),
 
-        // Chat History List
         Expanded(
           child: ListView.builder(
             controller: _scrollCtrl,
@@ -1278,7 +1288,6 @@ class _ChatNodePanelState extends State<ChatNodePanel> {
           ),
         ),
 
-        // Input Area
         Container(
           padding: const EdgeInsets.all(15),
           decoration: const BoxDecoration(
@@ -1287,7 +1296,6 @@ class _ChatNodePanelState extends State<ChatNodePanel> {
           ),
           child: Column(
             children: [
-              // --- NEW: Force Answer Button ---
               if (isThisGenerating)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 10.0),
@@ -1437,12 +1445,11 @@ class _StudyNodePanelState extends State<StudyNodePanel> {
               label: Text(isThisGenerating ? "RESEARCHING..." : "START AUTONOMOUS STUDY"),
               onPressed: networkState.isGeneratingOllama || _topicCtrl.text.isEmpty ? null : () {
                 final sequence = graphState.getCompiledNodes(widget.nodeId);
-                networkState.triggerStudyLoop(node, sequence);
+                networkState.triggerStudyLoop(node, sequence, graphState); 
               },
             ),
           ),
           
-          // --- NEW: Force Answer Button ---
           if (isThisGenerating) ...[
             const SizedBox(height: 10),
             SizedBox(
@@ -1482,6 +1489,530 @@ class _StudyNodePanelState extends State<StudyNodePanel> {
             const SizedBox(height: 10),
             const Text("💡 Wire this node into an Output or Chat node to use this report as context!", style: TextStyle(color: Colors.greenAccent, fontSize: 12, fontStyle: FontStyle.italic))
           ]
+        ],
+      ),
+    );
+  }
+}
+
+// ====================================================================
+// SUMMARIZE NODE PANEL
+// ====================================================================
+
+class SummarizeNodePanel extends StatelessWidget {
+  final String nodeId;
+  const SummarizeNodePanel({super.key, required this.nodeId});
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 2,
+      child: Column(
+        children: [
+          const TabBar(
+            indicatorColor: Colors.white,
+            labelColor: Colors.white,
+            unselectedLabelColor: Colors.white54,
+            tabs: [
+              Tab(icon: Icon(Icons.menu_book), text: "Compiled Data"),
+              Tab(icon: Icon(Icons.bolt), text: "Execution"),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                PreviewPanel(targetNodeId: nodeId), 
+                _SummarizeInterface(nodeId: nodeId),
+              ],
+            ),
+          )
+        ],
+      ),
+    );
+  }
+}
+
+class _SummarizeInterface extends StatefulWidget {
+  final String nodeId;
+  const _SummarizeInterface({required this.nodeId});
+  @override
+  State<_SummarizeInterface> createState() => _SummarizeInterfaceState();
+}
+
+class _SummarizeInterfaceState extends State<_SummarizeInterface> {
+  late TextEditingController _promptCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    final graphState = context.read<GraphState>();
+    final initialPrompt = graphState.nodes[widget.nodeId]?.ollamaPrompt ?? "";
+    _promptCtrl = TextEditingController(text: initialPrompt.isEmpty ? "Please provide a comprehensive and detailed summary of the following context material." : initialPrompt);
+  }
+
+  @override
+  void dispose() { _promptCtrl.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) {
+    final graphState = context.watch<GraphState>();
+    final networkState = context.watch<NetworkState>(); 
+    final node = graphState.nodes[widget.nodeId];
+    if (node == null) return const SizedBox.shrink();
+
+    final bool isThisGenerating = networkState.isNodeGenerating(widget.nodeId);
+
+    return Padding(
+      padding: const EdgeInsets.all(20.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.bolt, color: Colors.white70, size: 20),
+              SizedBox(width: 10),
+              Text("DIRECT PROMPT (NO AGENT)", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 1.5)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          const Text("Gathers all upstream context and feeds it directly into Ollama with your instructions. Bypasses the autonomous ReAct agent loop entirely for speed.", style: TextStyle(color: Colors.white54, fontSize: 12)),
+          const SizedBox(height: 20),
+
+          const Text("LLM INSTRUCTION", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _promptCtrl, maxLines: 3,
+            decoration: const InputDecoration(filled: true, fillColor: Color(0xFF222222), border: OutlineInputBorder(borderSide: BorderSide.none), hintText: "E.g., Write a 5-paragraph essay comparing these documents..."),
+            onChanged: (val) => graphState.updateOllamaPrompt(widget.nodeId, val),
+          ),
+          const SizedBox(height: 15),
+
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF333333), 
+                foregroundColor: Colors.white, 
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                side: const BorderSide(color: Colors.white54)
+              ),
+              icon: isThisGenerating 
+                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) 
+                : const Icon(Icons.bolt),
+              label: Text(isThisGenerating ? "GENERATING..." : "RUN PROMPT (${networkState.ollamaModel})"),
+              onPressed: networkState.isGeneratingOllama ? null : () {
+                final sequence = graphState.getCompiledNodes(widget.nodeId);
+                networkState.triggerSummarizeGeneration(node, sequence, graphState); 
+              },
+            ),
+          ),
+          
+          const SizedBox(height: 20),
+          const Text("RESULT", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+          const SizedBox(height: 10),
+          Expanded(
+            child: Container(
+              width: double.infinity, padding: const EdgeInsets.all(15),
+              decoration: BoxDecoration(color: const Color(0xFF111111), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.white12)),
+              child: SingleChildScrollView(
+                child: SelectableText.rich(
+                  node.ollamaResult.isEmpty 
+                      ? const TextSpan(text: "Output will appear here...", style: TextStyle(color: Colors.grey))
+                      : parseRichText(node.ollamaResult, networkState.redleafService.apiUrl),
+                  style: const TextStyle(color: Colors.white, height: 1.5),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(foregroundColor: Colors.white, side: const BorderSide(color: Colors.white54)),
+              icon: const Icon(Icons.turn_right), label: const Text("Promote to Scratchpad"),
+              onPressed: node.ollamaResult.isEmpty || networkState.isGeneratingOllama ? null : () => graphState.promoteOutputToScratchpad(node.id),
+            ),
+          )
+        ],
+      ),
+    );
+  }
+}
+
+// ====================================================================
+// NEW: WIKI READER NODE PANEL
+// ====================================================================
+
+class WikiReaderNodePanel extends StatefulWidget {
+  final String nodeId;
+  const WikiReaderNodePanel({super.key, required this.nodeId});
+
+  @override
+  State<WikiReaderNodePanel> createState() => _WikiReaderNodePanelState();
+}
+
+class _WikiReaderNodePanelState extends State<WikiReaderNodePanel> {
+  late TextEditingController _titleCtrl;
+  String _preview = "";
+  bool _isLoadingPreview = false;
+  
+  List<String> _availablePages = [];
+  bool _isLoadingPages = true;
+
+  @override
+  void initState() {
+    super.initState();
+    final graphState = context.read<GraphState>();
+    _titleCtrl = TextEditingController(text: graphState.nodes[widget.nodeId]?.wikiTitle ?? "");
+    _fetchPages();
+  }
+
+  @override
+  void didUpdateWidget(covariant WikiReaderNodePanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.nodeId != widget.nodeId) {
+      final graphState = context.read<GraphState>();
+      _titleCtrl.text = graphState.nodes[widget.nodeId]?.wikiTitle ?? "";
+      _preview = "";
+      _fetchPages();
+    }
+  }
+
+  @override
+  void dispose() {
+    _titleCtrl.dispose();
+    super.dispose();
+  }
+
+  void _fetchPages() async {
+    final graphState = context.read<GraphState>();
+    final networkState = context.read<NetworkState>();
+    final pages = await graphState.listWikiPages(networkState);
+    if (mounted) setState(() { _availablePages = pages; _isLoadingPages = false; });
+  }
+
+  void _fetchPreview() async {
+    if (_titleCtrl.text.trim().isEmpty) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please enter a Wiki page title first.")));
+      return;
+    }
+    
+    setState(() => _isLoadingPreview = true);
+    final graphState = context.read<GraphState>();
+    final networkState = context.read<NetworkState>();
+    
+    final text = await graphState.readWikiPage(_titleCtrl.text, networkState);
+    if (mounted) setState((){ _preview = text; _isLoadingPreview = false; });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final graphState = context.watch<GraphState>();
+    final node = graphState.nodes[widget.nodeId];
+    if (node == null) return const SizedBox.shrink();
+
+    return Container(
+      color: const Color(0xFF1A1A1A), padding: const EdgeInsets.all(20),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Row(
+          children: [
+            Icon(Icons.menu_book, color: Colors.lightBlueAccent, size: 20),
+            SizedBox(width: 10),
+            Text("WIKI READER", style: TextStyle(color: Colors.lightBlueAccent, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+          ],
+        ),
+        const SizedBox(height: 20),
+        const Text(
+          "Loads a Markdown (.md) file from your local Wiki folder into the LLM context. Ideal for feeding existing knowledge to an Agent.", 
+          style: TextStyle(color: Colors.grey, fontSize: 13, height: 1.4)
+        ),
+        const SizedBox(height: 20),
+        
+        const Text("Wiki Page Title:", style: TextStyle(color: Colors.white70, fontSize: 12)),
+        const SizedBox(height: 5),
+        TextField(
+          controller: _titleCtrl,
+          decoration: const InputDecoration(
+            filled: true, fillColor: Color(0xFF222222), 
+            hintText: "e.g. Cold_War_Economics",
+            border: OutlineInputBorder(borderSide: BorderSide.none)
+          ),
+          onChanged: (v) {
+             graphState.updateWikiTitle(widget.nodeId, v);
+             graphState.updateNodeTitle(widget.nodeId, "Read: $v");
+          }
+        ),
+        const SizedBox(height: 10),
+
+        // --- NEW: Browse Directory UI ---
+        Theme(
+          data: ThemeData(unselectedWidgetColor: Colors.grey, dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            title: Text("Browse Directory (${_availablePages.length} files)", style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(color: const Color(0xFF222222), borderRadius: BorderRadius.circular(8)),
+                child: _isLoadingPages 
+                  ? const Text("Scanning folder...", style: TextStyle(color: Colors.white54, fontSize: 12))
+                  : _availablePages.isEmpty 
+                    ? const Text("No wiki pages found.", style: TextStyle(color: Colors.white54, fontSize: 12))
+                    : Wrap(
+                        spacing: 8, runSpacing: 8,
+                        children: _availablePages.map((page) => ActionChip(
+                          backgroundColor: const Color(0xFF333333),
+                          side: BorderSide.none,
+                          label: Text(page, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                          onPressed: () {
+                            _titleCtrl.text = page;
+                            graphState.updateWikiTitle(widget.nodeId, page);
+                            graphState.updateNodeTitle(widget.nodeId, "Read: $page");
+                            _fetchPreview();
+                          },
+                        )).toList(),
+                      ),
+              )
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 20),
+        ElevatedButton.icon(
+          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF333333), foregroundColor: Colors.white),
+          icon: _isLoadingPreview ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Icon(Icons.preview),
+          label: const Text("Preview Local File"),
+          onPressed: _isLoadingPreview ? null : _fetchPreview,
+        ),
+        if (_preview.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          const Text("File Contents:", style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 10),
+          Expanded(
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: const Color(0xFF222222), borderRadius: BorderRadius.circular(8)),
+              child: SingleChildScrollView(
+                child: SelectableText(_preview, style: const TextStyle(color: Colors.white70, fontSize: 13, fontFamily: 'monospace')),
+              ),
+            ),
+          )
+        ]
+      ])
+    );
+  }
+}
+
+// ====================================================================
+// NEW: WIKI WRITER NODE PANEL
+// ====================================================================
+
+class WikiWriterNodePanel extends StatelessWidget {
+  final String nodeId;
+  const WikiWriterNodePanel({super.key, required this.nodeId});
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 2,
+      child: Column(
+        children: [
+          const TabBar(
+            indicatorColor: Colors.white,
+            labelColor: Colors.white,
+            unselectedLabelColor: Colors.white54,
+            tabs: [
+              Tab(icon: Icon(Icons.menu_book), text: "Compiled Data"),
+              Tab(icon: Icon(Icons.edit_document), text: "Wiki Editor"),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                PreviewPanel(targetNodeId: nodeId), 
+                _WikiWriterInterface(nodeId: nodeId),
+              ],
+            ),
+          )
+        ],
+      ),
+    );
+  }
+}
+
+class _WikiWriterInterface extends StatefulWidget {
+  final String nodeId;
+  const _WikiWriterInterface({required this.nodeId});
+  @override
+  State<_WikiWriterInterface> createState() => _WikiWriterInterfaceState();
+}
+
+class _WikiWriterInterfaceState extends State<_WikiWriterInterface> {
+  late TextEditingController _titleCtrl;
+  late TextEditingController _promptCtrl;
+  
+  List<String> _availablePages = [];
+  bool _isLoadingPages = true;
+
+  @override
+  void initState() {
+    super.initState();
+    final graphState = context.read<GraphState>();
+    final node = graphState.nodes[widget.nodeId];
+    _titleCtrl = TextEditingController(text: node?.wikiTitle ?? "");
+    _promptCtrl = TextEditingController(text: node?.ollamaPrompt ?? "Review the CURRENT WIKI PAGE STATE and the NEW RESEARCH. Rewrite, expand, and format the wiki page to seamlessly incorporate the new facts.");
+    _fetchPages();
+  }
+
+  @override
+  void didUpdateWidget(covariant _WikiWriterInterface oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.nodeId != widget.nodeId) {
+      final graphState = context.read<GraphState>();
+      final node = graphState.nodes[widget.nodeId];
+      _titleCtrl.text = node?.wikiTitle ?? "";
+      _promptCtrl.text = node?.ollamaPrompt ?? "Review the CURRENT WIKI PAGE STATE and the NEW RESEARCH. Rewrite, expand, and format the wiki page to seamlessly incorporate the new facts.";
+      _fetchPages();
+    }
+  }
+
+  @override
+  void dispose() { 
+    _titleCtrl.dispose();
+    _promptCtrl.dispose(); 
+    super.dispose(); 
+  }
+
+  void _fetchPages() async {
+    final graphState = context.read<GraphState>();
+    final networkState = context.read<NetworkState>();
+    final pages = await graphState.listWikiPages(networkState);
+    if (mounted) setState(() { _availablePages = pages; _isLoadingPages = false; });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final graphState = context.watch<GraphState>();
+    final networkState = context.watch<NetworkState>(); 
+    final node = graphState.nodes[widget.nodeId];
+    if (node == null) return const SizedBox.shrink();
+
+    final bool isThisGenerating = networkState.isNodeGenerating(widget.nodeId);
+
+    return Padding(
+      padding: const EdgeInsets.all(20.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.edit_document, color: Colors.deepOrangeAccent, size: 20),
+              SizedBox(width: 10),
+              Text("WIKI WRITER (TERMINAL)", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 1.5)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          const Text("Instructs Ollama to act as a Wikipedia Editor. It will consume all upstream context and automatically save the output as a Markdown (.md) file to your local Wiki directory. Old versions are backed up automatically.", style: TextStyle(color: Colors.white54, fontSize: 12)),
+          const SizedBox(height: 20),
+
+          const Text("Target File Name:", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white70)),
+          const SizedBox(height: 5),
+          TextField(
+            controller: _titleCtrl,
+            decoration: const InputDecoration(
+              filled: true, fillColor: Color(0xFF222222), 
+              border: OutlineInputBorder(borderSide: BorderSide.none), 
+              hintText: "e.g. Cold_War_Economics"
+            ),
+            onChanged: (val) {
+               graphState.updateWikiTitle(widget.nodeId, val);
+               graphState.updateNodeTitle(widget.nodeId, "Write: $val");
+            }
+          ),
+          const SizedBox(height: 10),
+
+          // --- NEW: Browse Directory UI ---
+          Theme(
+            data: ThemeData(unselectedWidgetColor: Colors.grey, dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              title: Text("Browse Directory (${_availablePages.length} files)", style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(color: const Color(0xFF222222), borderRadius: BorderRadius.circular(8)),
+                  child: _isLoadingPages 
+                    ? const Text("Scanning folder...", style: TextStyle(color: Colors.white54, fontSize: 12))
+                    : _availablePages.isEmpty 
+                      ? const Text("No wiki pages found.", style: TextStyle(color: Colors.white54, fontSize: 12))
+                      : Wrap(
+                          spacing: 8, runSpacing: 8,
+                          children: _availablePages.map((page) => ActionChip(
+                            backgroundColor: const Color(0xFF333333),
+                            side: BorderSide.none,
+                            label: Text(page, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                            onPressed: () {
+                              _titleCtrl.text = page;
+                              graphState.updateWikiTitle(widget.nodeId, page);
+                              graphState.updateNodeTitle(widget.nodeId, "Write: $page");
+                            },
+                          )).toList(),
+                        ),
+                )
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 15),
+
+          const Text("Editor Instructions:", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white70)),
+          const SizedBox(height: 5),
+          TextField(
+            controller: _promptCtrl, maxLines: 3,
+            decoration: const InputDecoration(filled: true, fillColor: Color(0xFF222222), border: OutlineInputBorder(borderSide: BorderSide.none), hintText: "Focus on adding the financial timeline..."),
+            onChanged: (val) => graphState.updateOllamaPrompt(widget.nodeId, val),
+          ),
+          const SizedBox(height: 15),
+
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.deepOrange.shade800, 
+                foregroundColor: Colors.white, 
+                padding: const EdgeInsets.symmetric(vertical: 16),
+              ),
+              icon: isThisGenerating 
+                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) 
+                : const Icon(Icons.edit_document),
+              label: Text(isThisGenerating ? "EDITING WIKI..." : "START WIKI EDIT (${networkState.ollamaModel})"),
+              onPressed: networkState.isGeneratingOllama || _titleCtrl.text.trim().isEmpty ? null : () {
+                final sequence = graphState.getCompiledNodes(widget.nodeId);
+                networkState.triggerWikiWriterGeneration(node, sequence, graphState);
+              },
+            ),
+          ),
+          
+          const SizedBox(height: 20),
+          const Text("LIVE DRAFT", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+          const SizedBox(height: 10),
+          Expanded(
+            child: Container(
+              width: double.infinity, padding: const EdgeInsets.all(15),
+              decoration: BoxDecoration(color: const Color(0xFF111111), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.white12)),
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  node.ollamaResult.isEmpty 
+                      ? "Output will appear here and then be written to disk..."
+                      : node.ollamaResult,
+                  style: const TextStyle(color: Colors.white, height: 1.5, fontFamily: 'monospace', fontSize: 13),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
