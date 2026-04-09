@@ -299,6 +299,7 @@ class GraphState extends ChangeNotifier {
     if (type == NodeType.summarize) title = "Summarizer";
     if (type == NodeType.wikiReader) title = "Wiki Reader"; 
     if (type == NodeType.wikiWriter) title = "Wiki Writer"; 
+    if (type == NodeType.council) title = "Wiki Council"; // <-- Added
 
     _nodes[id] = StoryNode(id: id, position: centerPos - const Offset(kNodeWidth / 2, kNodeHeight / 2), title: title, type: type);
     _selectedNodeIds = {id};
@@ -472,7 +473,7 @@ class GraphState extends ChangeNotifier {
       List<String> nextIds = []; 
       if (data['next_ids'] != null) { 
         for (var id in List<String>.from(data['next_ids'])) { 
-          if (_nodes[id]?.type != NodeType.output && _nodes[id]?.type != NodeType.wikiWriter) nextIds.add(id); 
+          if (_nodes[id]?.type != NodeType.output && _nodes[id]?.type != NodeType.wikiWriter && _nodes[id]?.type != NodeType.council) nextIds.add(id); 
         } 
       } 
       final newNode = StoryNode.fromJson(data)..position = newPos..nextNodeIds = nextIds; 
@@ -493,7 +494,8 @@ class GraphState extends ChangeNotifier {
       n.type == NodeType.chat || 
       n.type == NodeType.study || 
       n.type == NodeType.summarize ||
-      n.type == NodeType.wikiWriter
+      n.type == NodeType.wikiWriter ||
+      n.type == NodeType.council // <-- Added
     ).toList();
     
     if (targetNodes.isEmpty) return;
@@ -531,7 +533,8 @@ class GraphState extends ChangeNotifier {
           n.type == NodeType.chat || 
           n.type == NodeType.study || 
           n.type == NodeType.summarize ||
-          n.type == NodeType.wikiWriter
+          n.type == NodeType.wikiWriter ||
+          n.type == NodeType.council // <-- Added
         ).id; 
       } 
       catch (_) { return []; } 
@@ -643,6 +646,15 @@ class GraphState extends ChangeNotifier {
   void streamToLastChatMessage(String id, String chunk) {
     if (_nodes.containsKey(id) && _nodes[id]!.chatHistory.isNotEmpty) {
       _nodes[id]!.chatHistory.last["content"] = (_nodes[id]!.chatHistory.last["content"] ?? "") + chunk;
+      notifyListeners();
+    }
+  }
+  
+  // --- NEW: COUNCIL AGENT LOGIC ---
+  void updateCouncilAgentCount(String id, int count) {
+    if (_nodes.containsKey(id)) {
+      requestUndoSnapshot();
+      _nodes[id]!.councilAgentCount = count;
       notifyListeners();
     }
   }

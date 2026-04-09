@@ -40,6 +40,9 @@ class StoryNode {
 
   // --- NEW: Agentic Wiki Configuration ---
   String wikiTitle;
+  
+  // --- NEW: Council Configuration ---
+  int councilAgentCount;
 
   StoryNode({
     required this.id, required this.position, this.type = NodeType.scene,
@@ -51,7 +54,8 @@ class StoryNode {
     List<Map<String, String>>? chatHistory, 
     this.searchLimit = 5, 
     List<Map<String, dynamic>>? pinnedSearchResults, 
-    this.wikiTitle = "", // <-- Added
+    this.wikiTitle = "", 
+    this.councilAgentCount = 3, // <-- Added
   }) : nextNodeIds = nextNodeIds ?? [],
        redleafPills = redleafPills ?? [],
        chatHistory = chatHistory ?? [],
@@ -80,7 +84,8 @@ class StoryNode {
     'chatHistory': chatHistory, 
     'searchLimit': searchLimit, 
     'pinnedSearchResults': pinnedSearchResults, 
-    'wikiTitle': wikiTitle, // <-- Added
+    'wikiTitle': wikiTitle, 
+    'councilAgentCount': councilAgentCount, // <-- Added
   };
 
   factory StoryNode.fromJson(Map<String, dynamic> json) {
@@ -96,8 +101,9 @@ class StoryNode {
     if (json['type'] == 'NodeType.study') parsedType = NodeType.study;
     if (json['type'] == 'NodeType.persona') parsedType = NodeType.persona;
     if (json['type'] == 'NodeType.summarize') parsedType = NodeType.summarize; 
-    if (json['type'] == 'NodeType.wikiReader') parsedType = NodeType.wikiReader; // <-- Added
-    if (json['type'] == 'NodeType.wikiWriter') parsedType = NodeType.wikiWriter; // <-- Added
+    if (json['type'] == 'NodeType.wikiReader') parsedType = NodeType.wikiReader; 
+    if (json['type'] == 'NodeType.wikiWriter') parsedType = NodeType.wikiWriter; 
+    if (json['type'] == 'NodeType.council') parsedType = NodeType.council; 
 
     return StoryNode(
       id: json['id'],
@@ -118,7 +124,8 @@ class StoryNode {
       pinnedSearchResults: (json['pinnedSearchResults'] as List?)
           ?.map((e) => Map<String, dynamic>.from(e as Map))
           .toList() ?? [], 
-      wikiTitle: json['wikiTitle'] ?? "", // <-- Added
+      wikiTitle: json['wikiTitle'] ?? "", 
+      councilAgentCount: json['councilAgentCount'] ?? 3, // <-- Added
     );
   }
 

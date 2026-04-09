@@ -62,6 +62,7 @@ class _NodeCanvasState extends State<NodeCanvas> {
                 PopupMenuItem(value: NodeType.output, child: Text("✨ Add Ollama Output")),
                 PopupMenuItem(value: NodeType.chat, child: Text("💬 Add Ollama Chat Node")),
                 PopupMenuItem(value: NodeType.wikiWriter, child: Text("🖋️ Add Wiki Writer")),
+                PopupMenuItem(value: NodeType.council, child: Text("🏛️ Add Wiki Council")), // <-- ADDED
               ],
             ).then((type) {
               if (type != null) graphState.addNode(canvasPos, type);
@@ -219,6 +220,11 @@ class _NodeVisualState extends State<NodeVisual> {
         displayTitle = node.wikiTitle.isEmpty ? "WIKI WRITER" : "WRITE: ${node.wikiTitle}";
         iconColor = Colors.deepOrangeAccent;
         break;
+      case NodeType.council: // <-- ADDED
+        iconData = Icons.account_balance;
+        displayTitle = "WIKI COUNCIL";
+        iconColor = Colors.amberAccent;
+        break;
       default:
         iconData = Icons.extension;
         displayTitle = "TOOL";
@@ -228,7 +234,7 @@ class _NodeVisualState extends State<NodeVisual> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        if ((node.type == NodeType.output || node.type == NodeType.chat || node.type == NodeType.study || node.type == NodeType.summarize || node.type == NodeType.wikiWriter) && isGenerating) 
+        if ((node.type == NodeType.output || node.type == NodeType.chat || node.type == NodeType.study || node.type == NodeType.summarize || node.type == NodeType.wikiWriter || node.type == NodeType.council) && isGenerating) 
           const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
         else 
           Icon(iconData, size: 24, color: iconColor), 
@@ -310,7 +316,7 @@ class _NodeVisualState extends State<NodeVisual> {
     final isCycleHover = context.select<CanvasState, bool>((s) => s.isInvalidCycle) && (isHoverTarget || isSwapTarget);
 
     final bool isGenerating = context.select<NetworkState, bool>((s) => s.isNodeGenerating(nodeId)) && 
-      (node.type == NodeType.output || node.type == NodeType.chat || node.type == NodeType.study || node.type == NodeType.summarize || node.type == NodeType.wikiWriter);
+      (node.type == NodeType.output || node.type == NodeType.chat || node.type == NodeType.study || node.type == NodeType.summarize || node.type == NodeType.wikiWriter || node.type == NodeType.council);
     
     final double height = node.currentHeight;
     final double borderRadius = node.isCompactToolNode ? (height / 2) : 12.0;
@@ -405,7 +411,6 @@ class _NodeVisualState extends State<NodeVisual> {
                 ),
               ),
 
-              // --- FIX: Output port is now visible for Deep Study and Summarize ---
               if (node.type != NodeType.output && node.type != NodeType.chat && node.type != NodeType.wikiWriter)
                 Positioned(
                   bottom: -20, 
