@@ -24,6 +24,7 @@ import 'panels/intersection_node_panel.dart';
 import 'panels/relationship_node_panel.dart';
 import 'panels/briefing_node_panel.dart';
 import 'panels/persona_node_panel.dart';
+import 'panels/research_party_node_panel.dart'; // <-- ADDED
 
 // EXPORT common UI elements so previously extracted panels don't break
 export 'dialogs/entity_search_dialog.dart';
@@ -186,6 +187,7 @@ class _SidePanelState extends State<SidePanel> {
     if (node.type == NodeType.wikiReader) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: WikiReaderNodePanel(nodeId: node.id)); 
     if (node.type == NodeType.wikiWriter) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: WikiWriterNodePanel(nodeId: node.id)); 
     if (node.type == NodeType.council) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: CouncilNodePanel(nodeId: node.id)); 
+    if (node.type == NodeType.researchParty) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: ResearchPartyNodePanel(nodeId: node.id)); // <-- ADDED
 
     // --- FIX: Scratchpad Node is now a Dual-Tab Read/Edit interface ---
     return DefaultTabController(

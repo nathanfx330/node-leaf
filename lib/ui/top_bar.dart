@@ -102,9 +102,9 @@ class TopBar extends StatelessWidget {
 
   // --- NEW: Wiki Graph Dialog ---
   void _showWikiGraphDialog(BuildContext context, GraphState graphState) {
-    // Sort pages by their PageRank score (descending)
-    final sortedPages = graphState.wikiPageRanks.keys.toList()
-      ..sort((a, b) => graphState.wikiPageRanks[b]!.compareTo(graphState.wikiPageRanks[a]!));
+    // Sort pages by their NodeRank score (descending)
+    final sortedPages = graphState.wikiNodeRanks.keys.toList()
+      ..sort((a, b) => graphState.wikiNodeRanks[b]!.compareTo(graphState.wikiNodeRanks[a]!));
 
     showDialog(
       context: context,
@@ -124,7 +124,7 @@ class TopBar extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                "Pages are ranked by their 'importance' within the network using a Markov Chain (PageRank) algorithm. "
+                "Pages are ranked by their 'importance' within the network using a Markov Chain (NodeRank) algorithm. "
                 "A score of 1.0 represents the most highly-connected hub in your Wiki.",
                 style: TextStyle(color: Colors.white54, fontSize: 13),
               ),
@@ -136,7 +136,7 @@ class TopBar extends StatelessWidget {
                       itemCount: sortedPages.length,
                       itemBuilder: (context, index) {
                         final page = sortedPages[index];
-                        final score = graphState.wikiPageRanks[page]!;
+                        final score = graphState.wikiNodeRanks[page]!;
                         final outLinks = graphState.wikiOutgoingLinks[page] ?? [];
                         
                         // Calculate a color gradient based on rank

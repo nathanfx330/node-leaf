@@ -11,6 +11,7 @@ import '../agents/chat_agent.dart';
 import '../agents/wiki_writer_agent.dart';
 import '../agents/summarizer_agent.dart';
 import '../agents/output_agent.dart';
+import '../agents/research_party_agent.dart'; // <-- ADDED
 import 'graph_state.dart'; 
 
 class NetworkState extends ChangeNotifier {
@@ -285,6 +286,26 @@ class NetworkState extends ChangeNotifier {
       node: node,
       sequence: sequence,
       userMessage: userMessage,
+      graphState: graphState,
+      networkState: this,
+      checkForceAnswer: () => _isForceAnswerTriggered,
+      onUpdate: () => notifyListeners(),
+    );
+
+    _generatingNodeId = null;
+    _isForceAnswerTriggered = false;
+    notifyListeners();
+  }
+
+  // --- ADDED ---
+  Future<void> triggerResearchPartyLoop(StoryNode node, List<StoryNode> sequence, GraphState graphState) async {
+    _generatingNodeId = node.id;
+    _isForceAnswerTriggered = false;
+    notifyListeners();
+
+    await ResearchPartyAgent.execute(
+      node: node,
+      sequence: sequence,
       graphState: graphState,
       networkState: this,
       checkForceAnswer: () => _isForceAnswerTriggered,

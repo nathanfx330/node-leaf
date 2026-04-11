@@ -40,31 +40,47 @@ class WikiCouncilAgent {
         targetWikiText = await graphState.readWikiPage(node.wikiTitle, networkState);
     }
 
+    // --- NEW: Gather History Context for Anti-Drift (Goal 1) ---
+    StringBuffer historyContext = StringBuffer();
+    if (isAuditMode && node.councilAuditHistory) {
+      node.ollamaResult += "> [System] Fetching Wiki page history for drift analysis...\n"; onUpdate();
+      final historyFiles = await graphState.getWikiHistory(node.wikiTitle, networkState);
+      
+      // Grab the 2 most recent backups to combat drift
+      int backupsToRead = historyFiles.length > 2 ? 2 : historyFiles.length; 
+      for(int i=0; i<backupsToRead; i++) {
+        final backupContent = await graphState.readWikiBackup(historyFiles[i], networkState);
+        if (backupContent != null) {
+          historyContext.writeln("\n>>> HISTORICAL VERSION ${i+1} (${historyFiles[i]}): <<<\n$backupContent\n");
+        }
+      }
+    }
+
     // --- NEW: Gather Wiki Knowledge Graph Context ---
     StringBuffer wikiGraphContext = StringBuffer();
     if (isAuditMode) {
-      final pageRank = graphState.wikiPageRanks[node.wikiTitle];
+      final nodeRank = graphState.wikiNodeRanks[node.wikiTitle];
       final outLinks = graphState.wikiOutgoingLinks[node.wikiTitle];
-      if (pageRank != null) {
-        wikiGraphContext.writeln("TARGET PAGE PAGERANK SCORE: ${pageRank.toStringAsFixed(3)} (0.0 to 1.0)");
+      if (nodeRank != null) {
+        wikiGraphContext.writeln("TARGET PAGE NODERANK SCORE: ${nodeRank.toStringAsFixed(3)} (0.0 to 1.0)");
         wikiGraphContext.writeln("TARGET PAGE OUTGOING WIKI LINKS: ${outLinks?.isEmpty ?? true ? 'None (This page is a dead-end!)' : outLinks!.join(', ')}");
       } else {
-        wikiGraphContext.writeln("TARGET PAGE PAGERANK SCORE: Not yet ranked (New Page)");
+        wikiGraphContext.writeln("TARGET PAGE NODERANK SCORE: Not yet ranked (New Page)");
       }
     } else {
-      final sortedPages = graphState.wikiPageRanks.keys.toList()
-        ..sort((a, b) => graphState.wikiPageRanks[b]!.compareTo(graphState.wikiPageRanks[a]!));
-      wikiGraphContext.writeln("TOP 5 WIKI HUBS (By PageRank):");
+      final sortedPages = graphState.wikiNodeRanks.keys.toList()
+        ..sort((a, b) => graphState.wikiNodeRanks[b]!.compareTo(graphState.wikiNodeRanks[a]!));
+      wikiGraphContext.writeln("TOP 5 WIKI HUBS (By NodeRank):");
       for (int i = 0; i < sortedPages.length && i < 5; i++) {
         final p = sortedPages[i];
-        wikiGraphContext.writeln("- $p (Score: ${graphState.wikiPageRanks[p]!.toStringAsFixed(3)}) -> Links to: ${graphState.wikiOutgoingLinks[p]?.join(', ') ?? 'Nothing'}");
+        wikiGraphContext.writeln("- $p (Score: ${graphState.wikiNodeRanks[p]!.toStringAsFixed(3)}) -> Links to: ${graphState.wikiOutgoingLinks[p]?.join(', ') ?? 'Nothing'}");
       }
     }
 
     // 1. Gather Upstream Context
     StringBuffer upstreamContext = StringBuffer();
     for (var n in sequence) {
-       if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study || n.type == NodeType.summarize || n.type == NodeType.wikiWriter || n.type == NodeType.council) continue;
+       if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study || n.type == NodeType.summarize || n.type == NodeType.wikiWriter || n.type == NodeType.council || n.type == NodeType.researchParty) continue;
        
        if (n.type == NodeType.wikiReader && n.wikiTitle.isNotEmpty && n.wikiTitle != node.wikiTitle) {
           upstreamContext.writeln("\n>>> UPSTREAM WIKI PAGE STATE: '${n.wikiTitle}' <<<");
@@ -118,14 +134,15 @@ class WikiCouncilAgent {
     node.ollamaResult += "\n> [System] Analyzing current knowledge state...\n"; onUpdate();
 
     final phase1Prompt = isAuditMode 
-    ? """Review the Target Wiki Page and the Upstream Context.
-Identify up to 3 core conceptual entities (People, Organizations, Specific Themes) that are missing, underrepresented, or controversial.
+    ? """Review the Target Wiki Page, its Historical Versions (if any), and the Upstream Context.
+Identify up to 3 core conceptual entities (People, Organizations, Specific Themes) that are missing, suffering from semantic drift, or controversial.
 Return ONLY a JSON object: {"core_entities": ["Entity 1", "Entity 2"]}
 
 TARGET WIKI PAGE (${node.wikiTitle}):
 $targetWikiText
 
-UPSTREAM CONTEXT (NEW RESEARCH):
+${historyContext.isNotEmpty ? historyContext.toString() : ""}
+UPSTREAM CONTEXT (REDLEAF GROUND TRUTH):
 ${upstreamContext.toString()}"""
     : """Review the provided upstream context.
 Identify up to 3 core conceptual entities (People, Organizations, Specific Themes) that are central to this topic.
@@ -203,7 +220,8 @@ ${upstreamContext.toString()}""";
 1. Act entirely in character as your assigned persona.
 2. DO NOT break the 4th wall.
 3. You MUST aggressively critique the TARGET WIKI PAGE based on the new UPSTREAM CONTEXT. Point out what the Wiki page gets wrong or is missing.
-4. ANALYZE THE WIKI KNOWLEDGE GRAPH DATA. If the page is a dead-end, suggest what it should link to. If it ignores a major hub, point it out."""
+4. ANTI-DRIFT DIRECTIVE: If historical versions are provided, identify if accurate ground-truth facts were lost or distorted over time (Semantic Drift). Aggressively argue to restore them using Redleaf context as the ultimate authority.
+5. ANALYZE THE WIKI KNOWLEDGE GRAPH DATA. If the page is a dead-end, suggest what it should link to."""
     : """CRITICAL INSTRUCTIONS:
 1. Act entirely in character as your assigned persona.
 2. DO NOT break the 4th wall.
@@ -225,7 +243,7 @@ $baseDebateRules
 
 1. Review the Target Wiki Page.
 2. Review the Upstream Context & Redleaf Graph Data.
-3. Review the Wiki Knowledge Graph Data (PageRanks and Links).
+3. Review the Wiki Knowledge Graph Data (NodeRanks and Links).
 4. Review the ongoing Debate Transcript.
 
 Add a single, concise paragraph to the debate. Argue exactly how the Target Wiki Page should be rewritten or expanded to incorporate the new data and improve its connections within the Wiki.
@@ -249,7 +267,7 @@ $baseDebateRules
 
 1. Review the User's Current Context.
 2. Review the Redleaf Graph Data.
-3. Review the Wiki Knowledge Graph Data (PageRanks and Links).
+3. Review the Wiki Knowledge Graph Data (NodeRanks and Links).
 4. Review the ongoing Debate Transcript from your peers.
 
 Add a single, concise paragraph to the debate. Point out a specific missing connection or suggest a new angle of research that the previous experts missed or got wrong.

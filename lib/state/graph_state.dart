@@ -4,12 +4,97 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart'; // <-- ADDED for compute()
 import 'package:uuid/uuid.dart';
 import 'package:file_picker/file_picker.dart';
 
 import '../constants.dart';
 import '../models/node_models.dart';
 import 'network_state.dart';
+
+// --- NEW: TOP-LEVEL FUNCTION FOR ISOLATE ---
+// This runs the heavy regex parsing and Markov Chain math on a background thread
+// so the UI doesn't freeze when the user has thousands of Wiki pages.
+Map<String, dynamic> _computeNodeRank(Map<String, String> pageContents) {
+  List<String> pages = pageContents.keys.toList();
+  final int N = pages.length;
+  if (N == 0) return {'ranks': <String, double>{}, 'outLinks': <String, List<String>>{}};
+
+  // 1. Parse Markdown for Wikilinks: [[Target Page]]
+  final linkRegex = RegExp(r'\[\[(.*?)\]\]');
+  Map<String, List<String>> outLinks = {};
+  
+  for (var page in pages) {
+    final content = pageContents[page] ?? "";
+    final matches = linkRegex.allMatches(content);
+    
+    Set<String> uniqueTargets = {};
+    for (var match in matches) {
+      final rawTarget = match.group(1)?.trim();
+      if (rawTarget != null && rawTarget.isNotEmpty) {
+        // Normalize the target string exactly how we normalize filenames
+        final safeTarget = rawTarget.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').replaceAll(' ', '_');
+        
+        // Only add edges to pages that actually exist in our wiki
+        if (pages.contains(safeTarget)) {
+          uniqueTargets.add(safeTarget);
+        }
+      }
+    }
+    outLinks[page] = uniqueTargets.toList();
+  }
+
+  // 2. NodeRank Algorithm (Markov Chain)
+  Map<String, double> ranks = { for (var p in pages) p: 1.0 / N };
+  const double d = 0.85; // Damping factor (probability of clicking a link vs random jumping)
+  const int iterations = 25; // 25 iterations is highly accurate for graphs under 10k nodes
+
+  for (int i = 0; i < iterations; i++) {
+    // Initialize new ranks with the random jump probability
+    Map<String, double> newRanks = { for (var p in pages) p: (1.0 - d) / N };
+    double danglingSum = 0.0;
+
+    // Find "Dangling Nodes" (pages with no outgoing links)
+    for (var p in pages) {
+      if (outLinks[p]!.isEmpty) {
+        danglingSum += ranks[p]!;
+      }
+    }
+
+    // Dangling nodes essentially link to EVERY page equally
+    if (danglingSum > 0) {
+        final share = (d * danglingSum) / N;
+        for (var p in pages) {
+          newRanks[p] = newRanks[p]! + share;
+        }
+    }
+
+    // Distribute rank across existing edges
+    for (var p in pages) {
+      final targets = outLinks[p]!;
+      if (targets.isNotEmpty) {
+        final contribution = (ranks[p]! * d) / targets.length;
+        for (var target in targets) {
+          newRanks[target] = newRanks[target]! + contribution;
+        }
+      }
+    }
+    ranks = newRanks;
+  }
+
+  // 3. Normalize for the UI (Scale highest page to exactly 1.0)
+  double maxRank = ranks.values.fold(0.0, (m, v) => v > m ? v : m);
+  if (maxRank > 0) {
+    for (var p in pages) {
+      ranks[p] = ranks[p]! / maxRank; 
+    }
+  }
+
+  return {
+    'ranks': ranks,
+    'outLinks': outLinks
+  };
+}
 
 class GraphState extends ChangeNotifier {
   Map<String, StoryNode> _nodes = {};
@@ -28,7 +113,7 @@ class GraphState extends ChangeNotifier {
   Timer? _undoDebounceTimer;
 
   // --- NEW: WIKI KNOWLEDGE GRAPH ---
-  Map<String, double> _wikiPageRanks = {};
+  Map<String, double> _wikiNodeRanks = {};
   Map<String, List<String>> _wikiOutgoingLinks = {};
 
   // Getters
@@ -40,7 +125,7 @@ class GraphState extends ChangeNotifier {
   Set<String> get activePathIds => _activePathIds;
   int getNodeIndex(String id) => _nodeSequence[id] ?? -1;
 
-  Map<String, double> get wikiPageRanks => _wikiPageRanks;
+  Map<String, double> get wikiNodeRanks => _wikiNodeRanks;
   Map<String, List<String>> get wikiOutgoingLinks => _wikiOutgoingLinks;
 
   // --- PROJECT MANAGEMENT (SAVE / LOAD) ---
@@ -338,113 +423,53 @@ class GraphState extends ChangeNotifier {
     return null;
   }
 
-  // --- NEW: MARKOV CHAIN / PAGERANK ALGORITHM ---
+  // --- NEW: MARKOV CHAIN / NODERANK ALGORITHM ---
   
   Future<void> calculateWikiGraph(NetworkState networkState) async {
     final dir = await _getWikiDirectory(networkState);
     if (dir == null) return;
 
-    List<String> pages = [];
     Map<String, String> pageContents = {};
 
-    // 1. Read all files into memory
+    // 1. Read all files asynchronously to prevent UI freeze
     try {
-      final entities = dir.listSync();
+      final entities = await dir.list().toList();
+      List<Future<void>> readTasks = [];
+
       for (var entity in entities) {
         if (entity is File && entity.path.endsWith('.md')) {
           final filename = entity.path.split(Platform.pathSeparator).last;
           final title = filename.substring(0, filename.length - 3);
-          pages.add(title);
-          pageContents[title] = await entity.readAsString();
+          
+          readTasks.add(entity.readAsString().then((content) {
+            pageContents[title] = content;
+          }));
         }
       }
+      // Wait for all I/O to finish in parallel
+      await Future.wait(readTasks);
     } catch (e) {
       debugPrint("Error reading wiki files for graph: $e");
       return;
     }
 
-    final int N = pages.length;
-    if (N == 0) {
-      _wikiPageRanks.clear();
+    if (pageContents.isEmpty) {
+      _wikiNodeRanks.clear();
       _wikiOutgoingLinks.clear();
       notifyListeners();
       return;
     }
 
-    // 2. Parse Markdown for Wikilinks: [[Target Page]]
-    final linkRegex = RegExp(r'\[\[(.*?)\]\]');
-    Map<String, List<String>> outLinks = {};
+    // 2. Offload heavy regex parsing and math to a background Isolate
+    final result = await compute(_computeNodeRank, pageContents);
+
+    _wikiNodeRanks = Map<String, double>.from(result['ranks']);
     
-    for (var page in pages) {
-      final content = pageContents[page] ?? "";
-      final matches = linkRegex.allMatches(content);
-      
-      Set<String> uniqueTargets = {};
-      for (var match in matches) {
-        final rawTarget = match.group(1)?.trim();
-        if (rawTarget != null && rawTarget.isNotEmpty) {
-          // Normalize the target string exactly how we normalize filenames
-          final safeTarget = rawTarget.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').replaceAll(' ', '_');
-          
-          // Only add edges to pages that actually exist in our wiki
-          if (pages.contains(safeTarget)) {
-            uniqueTargets.add(safeTarget);
-          }
-        }
-      }
-      outLinks[page] = uniqueTargets.toList();
-    }
-
-    // 3. PageRank Algorithm (Markov Chain)
-    Map<String, double> ranks = { for (var p in pages) p: 1.0 / N };
-    const double d = 0.85; // Damping factor (probability of clicking a link vs random jumping)
-    const int iterations = 25; // 25 iterations is highly accurate for graphs under 10k nodes
-
-    for (int i = 0; i < iterations; i++) {
-      // Initialize new ranks with the random jump probability
-      Map<String, double> newRanks = { for (var p in pages) p: (1.0 - d) / N };
-      double danglingSum = 0.0;
-
-      // Find "Dangling Nodes" (pages with no outgoing links)
-      for (var p in pages) {
-        if (outLinks[p]!.isEmpty) {
-          danglingSum += ranks[p]!;
-        }
-      }
-
-      // Dangling nodes essentially link to EVERY page equally
-      if (danglingSum > 0) {
-          final share = (d * danglingSum) / N;
-          for (var p in pages) {
-            newRanks[p] = newRanks[p]! + share;
-          }
-      }
-
-      // Distribute rank across existing edges
-      for (var p in pages) {
-        final targets = outLinks[p]!;
-        if (targets.isNotEmpty) {
-          final contribution = (ranks[p]! * d) / targets.length;
-          for (var target in targets) {
-            newRanks[target] = newRanks[target]! + contribution;
-          }
-        }
-      }
-      ranks = newRanks;
-    }
-
-    // 4. Normalize for the UI (Scale highest page to exactly 1.0)
-    double maxRank = ranks.values.fold(0.0, (m, v) => v > m ? v : m);
-    if (maxRank > 0) {
-      for (var p in pages) {
-        ranks[p] = ranks[p]! / maxRank; 
-      }
-    }
-
-    _wikiPageRanks = ranks;
-    _wikiOutgoingLinks = outLinks;
+    _wikiOutgoingLinks = (result['outLinks'] as Map<String, dynamic>).map(
+      (key, value) => MapEntry(key, List<String>.from(value))
+    );
     
-    debugPrint("Wiki Graph updated. Processed $N nodes.");
+    debugPrint("Wiki Graph updated. Processed ${pageContents.length} nodes.");
     notifyListeners();
   }
 
@@ -468,6 +493,7 @@ class GraphState extends ChangeNotifier {
     if (type == NodeType.wikiReader) title = "Wiki Reader"; 
     if (type == NodeType.wikiWriter) title = "Wiki Writer"; 
     if (type == NodeType.council) title = "Wiki Council";
+    if (type == NodeType.researchParty) title = "Research Party";
 
     _nodes[id] = StoryNode(id: id, position: centerPos - const Offset(kNodeWidth / 2, kNodeHeight / 2), title: title, type: type);
     _selectedNodeIds = {id};
@@ -640,7 +666,7 @@ class GraphState extends ChangeNotifier {
       List<String> nextIds = []; 
       if (data['next_ids'] != null) { 
         for (var id in List<String>.from(data['next_ids'])) { 
-          if (_nodes[id]?.type != NodeType.output && _nodes[id]?.type != NodeType.wikiWriter && _nodes[id]?.type != NodeType.council) nextIds.add(id); 
+          if (_nodes[id]?.type != NodeType.output && _nodes[id]?.type != NodeType.wikiWriter && _nodes[id]?.type != NodeType.council && _nodes[id]?.type != NodeType.researchParty) nextIds.add(id); 
         } 
       } 
       final newNode = StoryNode.fromJson(data)..position = newPos..nextNodeIds = nextIds; 
@@ -662,7 +688,8 @@ class GraphState extends ChangeNotifier {
       n.type == NodeType.study || 
       n.type == NodeType.summarize ||
       n.type == NodeType.wikiWriter ||
-      n.type == NodeType.council
+      n.type == NodeType.council ||
+      n.type == NodeType.researchParty
     ).toList();
     
     if (targetNodes.isEmpty) return;
@@ -701,7 +728,8 @@ class GraphState extends ChangeNotifier {
           n.type == NodeType.study || 
           n.type == NodeType.summarize ||
           n.type == NodeType.wikiWriter ||
-          n.type == NodeType.council
+          n.type == NodeType.council ||
+          n.type == NodeType.researchParty
         ).id; 
       } 
       catch (_) { return []; } 
@@ -813,6 +841,14 @@ class GraphState extends ChangeNotifier {
     if (_nodes.containsKey(id)) {
       requestUndoSnapshot();
       _nodes[id]!.councilAgentCount = count;
+      notifyListeners();
+    }
+  }
+  
+  void toggleCouncilAuditHistory(String id, bool value) {
+    if (_nodes.containsKey(id)) {
+      requestUndoSnapshot();
+      _nodes[id]!.councilAuditHistory = value;
       notifyListeners();
     }
   }

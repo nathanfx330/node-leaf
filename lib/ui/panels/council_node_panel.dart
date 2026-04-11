@@ -54,7 +54,7 @@ class _CouncilInterfaceState extends State<_CouncilInterface> {
   List<String> _availablePages = [];
   bool _isLoadingPages = true;
 
-  // --- NEW: State for history tracking ---
+  // --- State for history tracking ---
   List<String> _historyFiles = [];
   bool _isLoadingHistory = false;
 
@@ -96,7 +96,6 @@ class _CouncilInterfaceState extends State<_CouncilInterface> {
     if (mounted) setState(() { _availablePages = pages; _isLoadingPages = false; });
   }
 
-  // --- NEW: History Fetching Method ---
   void _fetchHistory() async {
     setState(() { _isLoadingHistory = true; });
     final graphState = context.read<GraphState>();
@@ -105,7 +104,6 @@ class _CouncilInterfaceState extends State<_CouncilInterface> {
     if (mounted) setState(() { _historyFiles = history; _isLoadingHistory = false; });
   }
 
-  // --- NEW: Load the current file into the viewer ---
   void _loadCurrentFile() async {
     final title = _titleCtrl.text.trim();
     if (title.isEmpty) return;
@@ -117,7 +115,6 @@ class _CouncilInterfaceState extends State<_CouncilInterface> {
     graphState.setNodeOllamaResult(widget.nodeId, "=== CURRENT FILE: $title.md ===\n\n$content");
   }
 
-  // --- NEW: Load a backup file into the viewer ---
   void _previewBackup(String backupFilename) async {
     final graphState = context.read<GraphState>();
     final networkState = context.read<NetworkState>();
@@ -130,7 +127,6 @@ class _CouncilInterfaceState extends State<_CouncilInterface> {
     }
   }
 
-  // --- NEW: Helper for Confirmation Dialog ---
   Future<bool> _showConfirmDialog(String message) async {
     return await showDialog<bool>(
       context: context,
@@ -153,7 +149,6 @@ class _CouncilInterfaceState extends State<_CouncilInterface> {
     ) ?? false;
   }
 
-  // --- NEW: History Restore Method ---
   void _restoreBackup(String backupFilename) async {
     final title = _titleCtrl.text.trim();
     if (title.isEmpty) return;
@@ -291,7 +286,7 @@ class _CouncilInterfaceState extends State<_CouncilInterface> {
             ),
           ),
           
-          // --- NEW: VERSION HISTORY ACCORDION ---
+          // --- VERSION HISTORY ACCORDION ---
           if (_titleCtrl.text.isNotEmpty)
             Theme(
               data: ThemeData(unselectedWidgetColor: Colors.grey, dividerColor: Colors.transparent),
@@ -355,6 +350,20 @@ class _CouncilInterfaceState extends State<_CouncilInterface> {
             ),
 
           const SizedBox(height: 15),
+
+          if (isAuditMode) ...[
+            Theme(
+              data: ThemeData(unselectedWidgetColor: Colors.grey),
+              child: CheckboxListTile(
+                title: const Text("Audit History", style: TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold)),
+                subtitle: const Text("The council will compare older versions of this page against the primary sources to recover lost facts and fix semantic drift.", style: TextStyle(fontSize: 10, color: Colors.white54)),
+                contentPadding: EdgeInsets.zero, controlAffinity: ListTileControlAffinity.leading, activeColor: Colors.amberAccent, checkColor: Colors.black,
+                value: node.councilAuditHistory, 
+                onChanged: (val) { if (val != null) graphState.toggleCouncilAuditHistory(widget.nodeId, val); },
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
 
           // --- AGENT COUNT ---
           Row(
@@ -432,7 +441,6 @@ class _CouncilInterfaceState extends State<_CouncilInterface> {
                 child: SelectableText.rich(
                   node.ollamaResult.isEmpty 
                       ? const TextSpan(text: "Council findings will appear here...", style: TextStyle(color: Colors.grey))
-                      // --- THIS IS THE FIX ---
                       : parseRichText(
                           node.ollamaResult, 
                           networkState.redleafService.apiUrl,
@@ -446,6 +454,28 @@ class _CouncilInterfaceState extends State<_CouncilInterface> {
               ),
             ),
           ),
+          
+          // --- NEW: Promote to Scratchpad Button ---
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(foregroundColor: Colors.white, side: const BorderSide(color: Colors.white54)),
+              icon: const Icon(Icons.turn_right), label: const Text("Promote Rewrite to Scratchpad"),
+              onPressed: node.ollamaResult.isEmpty || networkState.isGeneratingOllama ? null : () {
+                String finalReport = node.ollamaResult;
+                final marker = "> [System] Debate concluded. Drafting final Council Report...\n\n";
+                if (finalReport.contains(marker)) {
+                  finalReport = finalReport.split(marker).last;
+                }
+                
+                final originalResult = node.ollamaResult;
+                graphState.setNodeOllamaResult(node.id, finalReport.trim());
+                graphState.promoteOutputToScratchpad(node.id);
+                graphState.setNodeOllamaResult(node.id, originalResult);
+              },
+            ),
+          )
         ],
       ),
     );
