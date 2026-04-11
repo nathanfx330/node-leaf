@@ -47,6 +47,7 @@ Node Leaf relies on a Directed Acyclic Graph (DAG) architecture. Data flows from
 * **📝 Summarizer:** A direct, high-speed execution node that bypasses agent loops to instantly process and summarize upstream context.
 * **💬 Ollama Chat:** Turns your upstream context into a system prompt for a continuous, interactive chat session.
 * **🤓 Deep Study (Geek Out):** Enter a topic, and this autonomous agent will loop through Redleaf—searching, reading, and taking notes—until it has enough data to synthesize a master report.
+* **🏕️ Research Party:** Deploys a team of exploratory agents (Scout, Forager, Chronicler). They read your current Wiki to map the landscape, independently forage the Redleaf database for hard primary-source evidence, and synthesize a grounded "Campfire Report" to expand your knowledge base.
 * **🖋️ Wiki Writer:** Acts as a strict fact-checker. It compares upstream research against the current Wiki state, resolves contradictions, and permanently saves the updated knowledge to your local Markdown files. Includes UI controls to preview and restore older versions.
 * **🏛️ Wiki Council:** Simulates a Mixture of Experts (MoE) debate loop powered by your Wiki Knowledge Graph. 
   * *Discovery Mode:* Analyzes upstream research to suggest new Wiki pages that should be created.
