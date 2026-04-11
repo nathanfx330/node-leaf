@@ -116,17 +116,52 @@ class _StudyNodePanelState extends State<StudyNodePanel> {
                 child: SelectableText.rich(
                   node.ollamaResult.isEmpty 
                       ? const TextSpan(text: "Agent logs and final report will appear here...", style: TextStyle(color: Colors.grey))
-                      : parseRichText(node.ollamaResult, networkState.redleafService.apiUrl),
+                      // --- THIS IS THE FIX FOR CLICKABLE LINKS IN STUDY NODE ---
+                      : parseRichText(
+                          node.ollamaResult, 
+                          networkState.redleafService.apiUrl,
+                          graphState: graphState,
+                          networkState: networkState,
+                          context: context,
+                          currentNodeId: widget.nodeId
+                        ),
                   style: const TextStyle(color: Colors.white, height: 1.5),
                 ),
               ),
             ),
           ),
           
-          if (node.ollamaResult.isNotEmpty && !isThisGenerating) ...[
-            const SizedBox(height: 10),
-            const Text("💡 Wire this node into an Output or Chat node to use this report as context!", style: TextStyle(color: Colors.greenAccent, fontSize: 12, fontStyle: FontStyle.italic))
-          ]
+          // --- NEW: Promote to Scratchpad Button ---
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(foregroundColor: Colors.white, side: const BorderSide(color: Colors.white54)),
+              icon: const Icon(Icons.turn_right), label: const Text("Promote Report to Scratchpad"),
+              onPressed: node.ollamaResult.isEmpty || networkState.isGeneratingOllama ? null : () {
+                // The AI output contains all the internal thoughts (starting with >).
+                // We only want to copy the actual final report to the scratchpad.
+                String finalReport = node.ollamaResult;
+                
+                // Find the marker where the actual report begins
+                final marker = "🤖 Agent: Synthesizing final intelligence report...\n\n";
+                if (finalReport.contains(marker)) {
+                  finalReport = finalReport.split(marker).last;
+                }
+                
+                // We'll temporarily set the node's result to just the clean report
+                // so the promoteOutputToScratchpad function grabs the right text.
+                final originalResult = node.ollamaResult;
+                graphState.setNodeOllamaResult(node.id, finalReport.trim());
+                
+                // Promote it!
+                graphState.promoteOutputToScratchpad(node.id);
+                
+                // Restore the original result (with the agent thoughts)
+                graphState.setNodeOllamaResult(node.id, originalResult);
+              },
+            ),
+          )
         ],
       ),
     );

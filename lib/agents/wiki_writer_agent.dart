@@ -1,7 +1,7 @@
 // --- File: lib/agents/wiki_writer_agent.dart ---
 import 'dart:convert';
 
-import '../constants.dart'; // <-- THIS WAS MISSING!
+import '../constants.dart'; 
 import '../models/node_models.dart';
 import '../state/graph_state.dart';
 import '../state/network_state.dart';
@@ -86,11 +86,11 @@ class WikiWriterAgent {
     String systemInstruction = '''You are an expert Wikipedia Editor and Fact Checker.
 Your task is to rewrite, expand, and format the target wiki page to seamlessly incorporate new facts from the provided context.
 
-RULES:
-1. If the new research agrees with the current wiki, seamlessly expand the article.
-2. If the new research CONTRADICTS the current wiki, you MUST preserve the controversy. Do not erase the old claim; instead, write: 'While previous documents suggested X, newly analyzed [Doc Y] indicates Z.'
-3. You MUST include inline citations like [Doc X] when adding new facts based on the REDLEAF context.
-4. You MUST append a bullet point to the '### Revision History' section at the bottom of the file detailing exactly what you changed today and why. (Create this section if it doesn't exist).
+CRITICAL RULES:
+1. PRESERVE ALL CITATIONS: If the upstream context contains citations like [Doc 12], you MUST keep them in your rewrite. Never state a fact without carrying over its corresponding [Doc X] tag.
+2. KNOWLEDGE GRAPH LINKS: Whenever you mention a core concept, person, or event that likely has its own page, wrap it in double brackets like [[Concept Name]] to build the Wiki Graph.
+3. AGREE OR CONTRAST: If the new research agrees with the current wiki, seamlessly expand the article. If it CONTRADICTS, you MUST preserve the controversy. Do not erase the old claim; instead, write: 'While previous documents suggested X, newly analyzed [Doc Y] indicates Z.'
+4. REVISION HISTORY: Append a bullet point to the '### Revision History' section at the bottom of the file detailing exactly what you changed today and why. (Create this section if it doesn't exist).
 5. Output ONLY valid Markdown. Do NOT wrap your response in markdown code blocks (e.g., no ```markdown). Output the raw text directly.''';
 
     if (customPersona.isNotEmpty) {

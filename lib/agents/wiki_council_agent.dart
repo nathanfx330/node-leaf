@@ -27,19 +27,49 @@ class WikiCouncilAgent {
     required bool Function() checkForceAnswer,
     required Function() onUpdate,
   }) async {
-    node.ollamaResult = "🏛️ Convening the Wiki Council...\n"; 
+    final bool isAuditMode = node.wikiTitle.trim().isNotEmpty;
+    
+    node.ollamaResult = isAuditMode 
+        ? "🏛️ Convening the Wiki Council [AUDIT MODE]...\n"
+        : "🏛️ Convening the Wiki Council [DISCOVERY MODE]...\n"; 
     onUpdate();
 
-    StringBuffer upstreamContext = StringBuffer();
+    String targetWikiText = "";
+    if (isAuditMode) {
+        node.ollamaResult += "> [System] Reading target page: ${node.wikiTitle}.md...\n"; onUpdate();
+        targetWikiText = await graphState.readWikiPage(node.wikiTitle, networkState);
+    }
+
+    // --- NEW: Gather Wiki Knowledge Graph Context ---
+    StringBuffer wikiGraphContext = StringBuffer();
+    if (isAuditMode) {
+      final pageRank = graphState.wikiPageRanks[node.wikiTitle];
+      final outLinks = graphState.wikiOutgoingLinks[node.wikiTitle];
+      if (pageRank != null) {
+        wikiGraphContext.writeln("TARGET PAGE PAGERANK SCORE: ${pageRank.toStringAsFixed(3)} (0.0 to 1.0)");
+        wikiGraphContext.writeln("TARGET PAGE OUTGOING WIKI LINKS: ${outLinks?.isEmpty ?? true ? 'None (This page is a dead-end!)' : outLinks!.join(', ')}");
+      } else {
+        wikiGraphContext.writeln("TARGET PAGE PAGERANK SCORE: Not yet ranked (New Page)");
+      }
+    } else {
+      final sortedPages = graphState.wikiPageRanks.keys.toList()
+        ..sort((a, b) => graphState.wikiPageRanks[b]!.compareTo(graphState.wikiPageRanks[a]!));
+      wikiGraphContext.writeln("TOP 5 WIKI HUBS (By PageRank):");
+      for (int i = 0; i < sortedPages.length && i < 5; i++) {
+        final p = sortedPages[i];
+        wikiGraphContext.writeln("- $p (Score: ${graphState.wikiPageRanks[p]!.toStringAsFixed(3)}) -> Links to: ${graphState.wikiOutgoingLinks[p]?.join(', ') ?? 'Nothing'}");
+      }
+    }
 
     // 1. Gather Upstream Context
+    StringBuffer upstreamContext = StringBuffer();
     for (var n in sequence) {
        if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study || n.type == NodeType.summarize || n.type == NodeType.wikiWriter || n.type == NodeType.council) continue;
        
-       if (n.type == NodeType.wikiReader && n.wikiTitle.isNotEmpty) {
-          upstreamContext.writeln("\n>>> CURRENT WIKI PAGE STATE: '${n.wikiTitle}' <<<");
+       if (n.type == NodeType.wikiReader && n.wikiTitle.isNotEmpty && n.wikiTitle != node.wikiTitle) {
+          upstreamContext.writeln("\n>>> UPSTREAM WIKI PAGE STATE: '${n.wikiTitle}' <<<");
           upstreamContext.writeln(await graphState.readWikiPage(n.wikiTitle, networkState));
-          upstreamContext.writeln(">>> END WIKI PAGE STATE <<<\n");
+          upstreamContext.writeln(">>> END UPSTREAM WIKI PAGE <<<\n");
           continue;
        }
 
@@ -78,8 +108,8 @@ class WikiCouncilAgent {
        }
     }
 
-    if (upstreamContext.isEmpty) {
-        node.ollamaResult += "\n> [Error] The Council requires upstream context (like a Wiki Reader or Deep Study node) to analyze.";
+    if (upstreamContext.isEmpty && !isAuditMode) {
+        node.ollamaResult += "\n> [Error] The Council requires upstream context (like a Deep Study or Global Search) to analyze.";
         onUpdate();
         return;
     }
@@ -87,7 +117,17 @@ class WikiCouncilAgent {
     // --- TURN 1: Initial Context Extraction ---
     node.ollamaResult += "\n> [System] Analyzing current knowledge state...\n"; onUpdate();
 
-    final phase1Prompt = """Review the provided upstream context and the current Wiki page.
+    final phase1Prompt = isAuditMode 
+    ? """Review the Target Wiki Page and the Upstream Context.
+Identify up to 3 core conceptual entities (People, Organizations, Specific Themes) that are missing, underrepresented, or controversial.
+Return ONLY a JSON object: {"core_entities": ["Entity 1", "Entity 2"]}
+
+TARGET WIKI PAGE (${node.wikiTitle}):
+$targetWikiText
+
+UPSTREAM CONTEXT (NEW RESEARCH):
+${upstreamContext.toString()}"""
+    : """Review the provided upstream context.
 Identify up to 3 core conceptual entities (People, Organizations, Specific Themes) that are central to this topic.
 Return ONLY a JSON object: {"core_entities": ["Entity 1", "Entity 2"]}
 
@@ -117,7 +157,7 @@ ${upstreamContext.toString()}""";
 
     // --- TURN 2: Redleaf Graph Mapping ---
     node.ollamaResult += "> [System] Mapping ontological gaps in Redleaf Graph for: ${coreEntities.join(', ')}\n"; onUpdate();
-    StringBuffer graphContext = StringBuffer();
+    StringBuffer redleafGraphContext = StringBuffer();
     
     for (String entityName in coreEntities.take(3)) { 
         node.ollamaResult += "  - Consulting graph for '$entityName'...\n"; onUpdate();
@@ -127,7 +167,7 @@ ${upstreamContext.toString()}""";
             final topMatch = searchRes.first;
             final id = await networkState.redleafService.extractEntityId(topMatch['label'], topMatch['text']);
             if (id != null) {
-                graphContext.writeln(await networkState.redleafService.fetchEntityRelationships(id, topMatch['text']));
+                redleafGraphContext.writeln(await networkState.redleafService.fetchEntityRelationships(id, topMatch['text']));
             }
         }
     }
@@ -158,13 +198,17 @@ ${upstreamContext.toString()}""";
         activeExperts.add(masterRoster[i % masterRoster.length]);
     }
 
-    final String baseDebateRules = """
-CRITICAL INSTRUCTIONS:
-1. You MUST act entirely in character as your assigned persona.
-2. DO NOT break the 4th wall. DO NOT act as an AI evaluating a prompt.
-3. DO NOT congratulate the other speakers or say things like "Great point" or "I agree."
-4. You MUST aggressively critique the research and point out flaws, missing data, or new angles.
-""";
+    final String baseDebateRules = isAuditMode 
+    ? """CRITICAL INSTRUCTIONS:
+1. Act entirely in character as your assigned persona.
+2. DO NOT break the 4th wall.
+3. You MUST aggressively critique the TARGET WIKI PAGE based on the new UPSTREAM CONTEXT. Point out what the Wiki page gets wrong or is missing.
+4. ANALYZE THE WIKI KNOWLEDGE GRAPH DATA. If the page is a dead-end, suggest what it should link to. If it ignores a major hub, point it out."""
+    : """CRITICAL INSTRUCTIONS:
+1. Act entirely in character as your assigned persona.
+2. DO NOT break the 4th wall.
+3. You MUST aggressively critique the research and point out flaws, missing data, or new angles. Find the 'white space' in the user's research.
+4. ANALYZE THE WIKI KNOWLEDGE GRAPH DATA. Suggest how this new research should connect to existing Wiki Hubs.""";
 
     for (int i = 0; i < activeExperts.length; i++) {
         if (checkForceAnswer()) return;
@@ -173,26 +217,54 @@ CRITICAL INSTRUCTIONS:
         
         node.ollamaResult += ">>> ${expert['name']} is speaking...\n"; onUpdate();
 
-        final debatePrompt = """${expert['prompt']}
+        final debatePrompt = isAuditMode 
+        ? """${expert['prompt']}
+You are part of the Wiki Council. Your job is to audit the Target Wiki Page.
+
+$baseDebateRules
+
+1. Review the Target Wiki Page.
+2. Review the Upstream Context & Redleaf Graph Data.
+3. Review the Wiki Knowledge Graph Data (PageRanks and Links).
+4. Review the ongoing Debate Transcript.
+
+Add a single, concise paragraph to the debate. Argue exactly how the Target Wiki Page should be rewritten or expanded to incorporate the new data and improve its connections within the Wiki.
+
+TARGET WIKI PAGE:
+$targetWikiText
+
+UPSTREAM CONTEXT & REDLEAF GRAPH:
+${upstreamContext.toString()}
+${redleafGraphContext.toString()}
+
+WIKI KNOWLEDGE GRAPH DATA:
+${wikiGraphContext.toString()}
+
+DEBATE TRANSCRIPT SO FAR:
+${debateTranscript.isEmpty ? "You are the first to speak. Begin the debate." : debateTranscript}"""
+        : """${expert['prompt']}
 You are part of the Wiki Council. Your job is to find the 'white space' in the user's research.
 
 $baseDebateRules
 
 1. Review the User's Current Context.
 2. Review the Redleaf Graph Data.
-3. Review the ongoing Debate Transcript from your peers.
+3. Review the Wiki Knowledge Graph Data (PageRanks and Links).
+4. Review the ongoing Debate Transcript from your peers.
 
-Add a single, concise paragraph to the debate. Point out a specific missing connection or suggest a new angle of research that the previous experts missed or got wrong. Do not summarize, just argue your point.
+Add a single, concise paragraph to the debate. Point out a specific missing connection or suggest a new angle of research that the previous experts missed or got wrong.
 
 USER'S CURRENT CONTEXT:
 ${upstreamContext.toString()}
 
 REDLEAF GRAPH DATA:
-${graphContext.isEmpty ? "No extended graph connections found." : graphContext.toString()}
+${redleafGraphContext.isEmpty ? "No extended graph connections found." : redleafGraphContext.toString()}
+
+WIKI KNOWLEDGE GRAPH DATA:
+${wikiGraphContext.toString()}
 
 DEBATE TRANSCRIPT SO FAR:
-${debateTranscript.isEmpty ? "You are the first to speak. Begin the debate." : debateTranscript}
-""";
+${debateTranscript.isEmpty ? "You are the first to speak. Begin the debate." : debateTranscript}""";
 
         try {
           final responseText = await OllamaService.generateText(
@@ -212,24 +284,47 @@ ${debateTranscript.isEmpty ? "You are the first to speak. Begin the debate." : d
     if (checkForceAnswer()) return;
 
     // --- TURN 4: The Director (Synthesis) ---
-    node.ollamaResult += "> [System] Debate concluded. Drafting final Council Audit Report...\n\n"; onUpdate();
+    node.ollamaResult += "> [System] Debate concluded. Drafting final Council Report...\n\n"; onUpdate();
 
     final currentDate = DateTime.now().toString().split('.')[0];
     
-    final synthesisPrompt = """You are the Director of the Wiki Council. 
+    final synthesisPrompt = isAuditMode 
+    ? """You are the Director of the Wiki Council. 
+You have overseen a debate about the Target Wiki Page.
+
+Your task is twofold:
+1. Write a brief "Director's Summary" outlining the flaws found in the original document based on the debate and its position in the Wiki Graph.
+2. Provide a **complete, proposed rewrite** of the Target Wiki Page that incorporates the best suggestions from the debate and the upstream context. 
+
+CRITICAL: You MUST use double brackets like [[Page Name]] to link concepts to other pages, especially if the debate suggested adding links.
+Include inline citations like [Doc X] if you use facts from the context.
+
+TARGET WIKI PAGE (ORIGINAL):
+$targetWikiText
+
+WIKI KNOWLEDGE GRAPH DATA:
+${wikiGraphContext.toString()}
+
+COUNCIL DEBATE TRANSCRIPT:
+$debateTranscript"""
+    : """You are the Director of the Wiki Council. 
 You must synthesize the Debate Transcript into a final, actionable report.
 
 Write a Council Audit Report containing:
 1. **Missing Connections:** A synthesized summary of the ontological gaps identified by the experts.
-2. **Suggested New Pages:** A bulleted list of recommended new Wiki pages to create based on the debate. For each, write a 1-sentence prompt that the user can feed into a 'Deep Study' agent to kickstart it.
+2. **Suggested New Pages:** A bulleted list of recommended new Wiki pages to create based on the debate. For each, write a 1-sentence prompt that the user can feed into a 'Deep Study' agent to kickstart it. 
 
-DO NOT use boilerplate placeholders like [Your Name] or make up random dates.
+CRITICAL: Use double brackets like [[Page Name]] when referencing existing Wiki Hubs or proposing new ones.
+
+WIKI KNOWLEDGE GRAPH DATA:
+${wikiGraphContext.toString()}
 
 DEBATE TRANSCRIPT:
-$debateTranscript
-""";
+$debateTranscript""";
 
-    String systemInstruction = "CURRENT SYSTEM TIME: $currentDate\n\nYou are the Director of the Wiki Council. You must synthesize the debate without using placeholders. Sign the report as 'The Director'. DO NOT evaluate the debate, just report the facts and suggestions.";
+    String systemInstruction = isAuditMode 
+    ? "CURRENT SYSTEM TIME: $currentDate\n\nYou are the Director of the Wiki Council. First summarize the debate, then output a full Markdown rewrite of the page under the heading '### Proposed Rewrite'. DO NOT use special tags, control tokens, or signatures. Output only the requested text."
+    : "CURRENT SYSTEM TIME: $currentDate\n\nYou are the Director of the Wiki Council. You must synthesize the debate. DO NOT use special tags, control tokens, or signatures. Output only the requested text.";
 
     try {
       final stream = OllamaService.generateTextStream(
@@ -240,7 +335,7 @@ $debateTranscript
       );
       
       await for (final chunk in stream) {
-          bool isFirstToken = node.ollamaResult.contains("> [System] Debate concluded. Drafting final Council Audit Report...\n\n");
+          bool isFirstToken = node.ollamaResult.contains("> [System] Debate concluded. Drafting final Council Report...\n\n");
           if (isFirstToken) node.ollamaResult = ""; 
           node.ollamaResult += chunk; 
           onUpdate(); 

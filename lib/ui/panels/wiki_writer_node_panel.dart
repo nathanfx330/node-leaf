@@ -2,7 +2,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../constants.dart';
 import '../../state/graph_state.dart';
 import '../../state/network_state.dart';
 import '../side_panel.dart'; // Needed for parseRichText & PreviewPanel
@@ -54,6 +53,10 @@ class _WikiWriterInterfaceState extends State<_WikiWriterInterface> {
   List<String> _availablePages = [];
   bool _isLoadingPages = true;
 
+  // --- State for history tracking ---
+  List<String> _historyFiles = [];
+  bool _isLoadingHistory = false;
+
   @override
   void initState() {
     super.initState();
@@ -62,6 +65,7 @@ class _WikiWriterInterfaceState extends State<_WikiWriterInterface> {
     _titleCtrl = TextEditingController(text: node?.wikiTitle ?? "");
     _promptCtrl = TextEditingController(text: node?.ollamaPrompt ?? "Review the CURRENT WIKI PAGE STATE and the NEW RESEARCH. Rewrite, expand, and format the wiki page to seamlessly incorporate the new facts.");
     _fetchPages();
+    if (_titleCtrl.text.isNotEmpty) _fetchHistory();
   }
 
   @override
@@ -73,6 +77,7 @@ class _WikiWriterInterfaceState extends State<_WikiWriterInterface> {
       _titleCtrl.text = node?.wikiTitle ?? "";
       _promptCtrl.text = node?.ollamaPrompt ?? "Review the CURRENT WIKI PAGE STATE and the NEW RESEARCH. Rewrite, expand, and format the wiki page to seamlessly incorporate the new facts.";
       _fetchPages();
+      if (_titleCtrl.text.isNotEmpty) _fetchHistory();
     }
   }
 
@@ -88,6 +93,86 @@ class _WikiWriterInterfaceState extends State<_WikiWriterInterface> {
     final networkState = context.read<NetworkState>();
     final pages = await graphState.listWikiPages(networkState);
     if (mounted) setState(() { _availablePages = pages; _isLoadingPages = false; });
+  }
+
+  void _fetchHistory() async {
+    setState(() { _isLoadingHistory = true; });
+    final graphState = context.read<GraphState>();
+    final networkState = context.read<NetworkState>();
+    final history = await graphState.getWikiHistory(_titleCtrl.text, networkState);
+    if (mounted) setState(() { _historyFiles = history; _isLoadingHistory = false; });
+  }
+
+  // --- Load the current file into the viewer ---
+  void _loadCurrentFile() async {
+    final title = _titleCtrl.text.trim();
+    if (title.isEmpty) return;
+    
+    final graphState = context.read<GraphState>();
+    final networkState = context.read<NetworkState>();
+    
+    final content = await graphState.readWikiPage(title, networkState);
+    graphState.setNodeOllamaResult(widget.nodeId, "=== CURRENT FILE: $title.md ===\n\n$content");
+  }
+
+  // --- Load a backup file into the viewer ---
+  void _previewBackup(String backupFilename) async {
+    final graphState = context.read<GraphState>();
+    final networkState = context.read<NetworkState>();
+    
+    final content = await graphState.readWikiBackup(backupFilename, networkState);
+    if (content != null) {
+      graphState.setNodeOllamaResult(widget.nodeId, "=== PREVIEWING BACKUP: $backupFilename ===\n\n$content");
+    } else {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Failed to load backup preview.")));
+    }
+  }
+
+  Future<bool> _showConfirmDialog(String message) async {
+    return await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF333333),
+        title: const Text("Confirm Restore", style: TextStyle(color: Colors.amberAccent)),
+        content: Text(message, style: const TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Cancel", style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.amberAccent, foregroundColor: Colors.black),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("RESTORE"),
+          ),
+        ],
+      ),
+    ) ?? false;
+  }
+
+  void _restoreBackup(String backupFilename) async {
+    final title = _titleCtrl.text.trim();
+    if (title.isEmpty) return;
+
+    final shouldRestore = await _showConfirmDialog('Are you sure you want to overwrite the current Wiki page with this older version?\n\n(The current state will be backed up automatically before the restore).');
+    if (!shouldRestore) return;
+
+    final graphState = context.read<GraphState>();
+    final networkState = context.read<NetworkState>();
+
+    final backupContent = await graphState.readWikiBackup(backupFilename, networkState);
+    
+    if (backupContent != null) {
+      final success = await graphState.writeWikiPage(title, backupContent, networkState);
+      
+      if (success && mounted) {
+        graphState.setNodeOllamaResult(widget.nodeId, "=== RESTORED SUCCESSFULLY ===\n\n$backupContent");
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Restored previous version successfully.")));
+        _fetchHistory(); 
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Failed to restore version.")));
+      }
+    }
   }
 
   @override
@@ -117,20 +202,38 @@ class _WikiWriterInterfaceState extends State<_WikiWriterInterface> {
 
           const Text("Target File Name:", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white70)),
           const SizedBox(height: 5),
-          TextField(
-            controller: _titleCtrl,
-            decoration: const InputDecoration(
-              filled: true, fillColor: Color(0xFF222222), 
-              border: OutlineInputBorder(borderSide: BorderSide.none), 
-              hintText: "e.g. Cold_War_Economics"
-            ),
-            onChanged: (val) {
-               graphState.updateWikiTitle(widget.nodeId, val);
-               graphState.updateNodeTitle(widget.nodeId, "Write: $val");
-            }
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _titleCtrl,
+                  decoration: const InputDecoration(
+                    filled: true, fillColor: Color(0xFF222222), 
+                    border: OutlineInputBorder(borderSide: BorderSide.none), 
+                    hintText: "e.g. Cold_War_Economics"
+                  ),
+                  onChanged: (val) {
+                     graphState.updateWikiTitle(widget.nodeId, val);
+                     graphState.updateNodeTitle(widget.nodeId, "Write: $val");
+                     _fetchHistory(); 
+                  }
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF333333), 
+                  foregroundColor: Colors.white, 
+                  padding: const EdgeInsets.symmetric(vertical: 16)
+                ),
+                onPressed: _titleCtrl.text.trim().isEmpty ? null : _loadCurrentFile,
+                child: const Text("Load"),
+              )
+            ],
           ),
           const SizedBox(height: 10),
 
+          // --- DIRECTORY BROWSER ---
           Theme(
             data: ThemeData(unselectedWidgetColor: Colors.grey, dividerColor: Colors.transparent),
             child: ExpansionTile(
@@ -155,6 +258,8 @@ class _WikiWriterInterfaceState extends State<_WikiWriterInterface> {
                               _titleCtrl.text = page;
                               graphState.updateWikiTitle(widget.nodeId, page);
                               graphState.updateNodeTitle(widget.nodeId, "Write: $page");
+                              _fetchHistory();
+                              _loadCurrentFile(); // Auto-load content to preview
                             },
                           )).toList(),
                         ),
@@ -162,6 +267,69 @@ class _WikiWriterInterfaceState extends State<_WikiWriterInterface> {
               ],
             ),
           ),
+          
+          // --- VERSION HISTORY ACCORDION ---
+          if (_titleCtrl.text.isNotEmpty)
+            Theme(
+              data: ThemeData(unselectedWidgetColor: Colors.grey, dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                title: Text("Version History (${_historyFiles.length} backups)", style: const TextStyle(color: Colors.amberAccent, fontSize: 12, fontWeight: FontWeight.bold)),
+                children: [
+                  Container(
+                    width: double.infinity,
+                    constraints: const BoxConstraints(maxHeight: 150),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(color: const Color(0xFF222222), borderRadius: BorderRadius.circular(8)),
+                    child: _isLoadingHistory 
+                      ? const Text("Scanning history...", style: TextStyle(color: Colors.white54, fontSize: 12))
+                      : _historyFiles.isEmpty 
+                        ? const Text("No previous versions found for this file.", style: TextStyle(color: Colors.white54, fontSize: 12))
+                        : ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: _historyFiles.length,
+                            itemBuilder: (ctx, i) {
+                              final filename = _historyFiles[i];
+                              final parts = filename.split('_');
+                              final timeStr = parts.length > 2 ? parts.last.replaceAll('.md', '') : 'Unknown Time';
+                              
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 8.0),
+                                child: Row(
+                                  children: [
+                                    Expanded(child: Text("Backup: $timeStr", style: const TextStyle(color: Colors.white70, fontSize: 12, fontFamily: 'monospace'))),
+                                    SizedBox(
+                                      height: 24,
+                                      child: OutlinedButton(
+                                        style: OutlinedButton.styleFrom(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                                          side: const BorderSide(color: Colors.lightBlueAccent)
+                                        ),
+                                        onPressed: () => _previewBackup(filename),
+                                        child: const Text("PREVIEW", style: TextStyle(color: Colors.lightBlueAccent, fontSize: 10)),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    SizedBox(
+                                      height: 24,
+                                      child: OutlinedButton(
+                                        style: OutlinedButton.styleFrom(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                                          side: const BorderSide(color: Colors.amberAccent)
+                                        ),
+                                        onPressed: () => _restoreBackup(filename),
+                                        child: const Text("RESTORE", style: TextStyle(color: Colors.amberAccent, fontSize: 10)),
+                                      ),
+                                    )
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                  )
+                ],
+              ),
+            ),
 
           const SizedBox(height: 15),
 
@@ -189,6 +357,8 @@ class _WikiWriterInterfaceState extends State<_WikiWriterInterface> {
               onPressed: networkState.isGeneratingOllama || _titleCtrl.text.trim().isEmpty ? null : () {
                 final sequence = graphState.getCompiledNodes(widget.nodeId);
                 networkState.triggerWikiWriterGeneration(node, sequence, graphState);
+                
+                Future.delayed(const Duration(seconds: 10), _fetchHistory);
               },
             ),
           ),
@@ -201,10 +371,18 @@ class _WikiWriterInterfaceState extends State<_WikiWriterInterface> {
               width: double.infinity, padding: const EdgeInsets.all(15),
               decoration: BoxDecoration(color: const Color(0xFF111111), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.white12)),
               child: SingleChildScrollView(
-                child: SelectableText(
+                child: SelectableText.rich(
                   node.ollamaResult.isEmpty 
-                      ? "Output will appear here and then be written to disk..."
-                      : node.ollamaResult,
+                      ? const TextSpan(text: "Output will appear here and then be written to disk...", style: TextStyle(color: Colors.grey))
+                      // --- THIS IS THE FIX ---
+                      : parseRichText(
+                          node.ollamaResult, 
+                          networkState.redleafService.apiUrl,
+                          graphState: graphState,
+                          networkState: networkState,
+                          context: context,
+                          currentNodeId: widget.nodeId
+                        ),
                   style: const TextStyle(color: Colors.white, height: 1.5, fontFamily: 'monospace', fontSize: 13),
                 ),
               ),

@@ -67,6 +67,10 @@ class TopBar extends StatelessWidget {
           _MenuButton(label: "Copy", onTap: () => graphState.copySelection()),
           _MenuButton(label: "Paste", onTap: () => graphState.paste()),
           const VerticalDivider(color: Colors.black, width: 20),
+          
+          // --- NEW: Wiki Graph Button ---
+          _MenuButton(label: "Wiki Graph", onTap: () => _showWikiGraphDialog(context, graphState)),
+          
           _MenuButton(label: "About", onTap: () => _showAboutDialog(context)),
           const Spacer(),
           
@@ -91,6 +95,121 @@ class TopBar extends StatelessWidget {
           const SizedBox(width: 10),
           IconButton(icon: const Icon(Icons.settings, size: 18), tooltip: "Settings", onPressed: () => _showSettingsDialog(context, networkState, graphState)),
           IconButton(icon: const Icon(Icons.delete, size: 18), onPressed: () => graphState.deleteSelected(), tooltip: "Delete Selected"),
+        ],
+      ),
+    );
+  }
+
+  // --- NEW: Wiki Graph Dialog ---
+  void _showWikiGraphDialog(BuildContext context, GraphState graphState) {
+    // Sort pages by their PageRank score (descending)
+    final sortedPages = graphState.wikiPageRanks.keys.toList()
+      ..sort((a, b) => graphState.wikiPageRanks[b]!.compareTo(graphState.wikiPageRanks[a]!));
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF222222),
+        title: const Row(
+          children: [
+            Icon(Icons.hub, color: Colors.amberAccent),
+            SizedBox(width: 10),
+            Text("Wiki Knowledge Graph", style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: SizedBox(
+          width: 800,
+          height: 600,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                "Pages are ranked by their 'importance' within the network using a Markov Chain (PageRank) algorithm. "
+                "A score of 1.0 represents the most highly-connected hub in your Wiki.",
+                style: TextStyle(color: Colors.white54, fontSize: 13),
+              ),
+              const SizedBox(height: 20),
+              Expanded(
+                child: sortedPages.isEmpty
+                  ? const Center(child: Text("No linked pages found. Use [[Page Title]] syntax in your wiki files.", style: TextStyle(color: Colors.white54)))
+                  : ListView.builder(
+                      itemCount: sortedPages.length,
+                      itemBuilder: (context, index) {
+                        final page = sortedPages[index];
+                        final score = graphState.wikiPageRanks[page]!;
+                        final outLinks = graphState.wikiOutgoingLinks[page] ?? [];
+                        
+                        // Calculate a color gradient based on rank
+                        final int colorValue = (score * 255).toInt();
+                        final Color rankColor = Color.fromARGB(255, 255, colorValue, 0);
+
+                        return Card(
+                          color: const Color(0xFF1A1A1A),
+                          margin: const EdgeInsets.only(bottom: 8),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Text(
+                                      "#${index + 1}", 
+                                      style: const TextStyle(color: Colors.white54, fontWeight: FontWeight.bold, fontSize: 16)
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        page, 
+                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)
+                                      ),
+                                    ),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: rankColor.withOpacity(0.2),
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(color: rankColor)
+                                      ),
+                                      child: Text(
+                                        "Score: ${score.toStringAsFixed(3)}",
+                                        style: TextStyle(color: rankColor, fontWeight: FontWeight.bold, fontSize: 12)
+                                      ),
+                                    )
+                                  ],
+                                ),
+                                if (outLinks.isNotEmpty) ...[
+                                  const SizedBox(height: 8),
+                                  const Text("Links to:", style: TextStyle(color: Colors.white54, fontSize: 12)),
+                                  const SizedBox(height: 4),
+                                  Wrap(
+                                    spacing: 6,
+                                    runSpacing: 6,
+                                    children: outLinks.map((link) => Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF333333),
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: Text(link, style: const TextStyle(color: Colors.lightBlueAccent, fontSize: 11)),
+                                    )).toList(),
+                                  )
+                                ]
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+              )
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx), 
+            child: const Text("Close", style: TextStyle(color: kAccentColor))
+          )
         ],
       ),
     );
@@ -192,7 +311,6 @@ class TopBar extends StatelessWidget {
                           onChanged: (val) => netState.setOllamaUrl(val),
                         ),
                         
-                        // --- NEW: Helper text for LAN connections ---
                         if (!netState.ollamaUrl.contains('localhost') && !netState.ollamaUrl.contains('127.0.0.1'))
                           const Padding(
                             padding: EdgeInsets.only(top: 8.0),
@@ -204,7 +322,6 @@ class TopBar extends StatelessWidget {
                           
                         const SizedBox(height: 15),
                         
-                        // --- NEW: Ollama Connection Button & Status ---
                         Row(
                           children: [
                             ElevatedButton(

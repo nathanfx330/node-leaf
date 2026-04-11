@@ -6,6 +6,8 @@ import 'package:provider/provider.dart';
 import '../../constants.dart';
 import '../../state/graph_state.dart';
 import '../../state/canvas_state.dart';
+import '../../state/network_state.dart'; // <-- Needed for apiUrl
+import '../side_panel.dart'; // <-- Needed for parseRichText
 
 class PreviewPanel extends StatelessWidget {
   final String? targetNodeId;
@@ -15,6 +17,7 @@ class PreviewPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final graphState = context.watch<GraphState>();
     final canvasState = context.read<CanvasState>();
+    final networkState = context.watch<NetworkState>(); // <-- Added
     final nodes = graphState.getCompiledNodes(targetNodeId);
 
     if (nodes.length <= 1) { 
@@ -81,7 +84,18 @@ class PreviewPanel extends StatelessWidget {
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children:[
                       Text((indexPrefix + node.title).toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 10, letterSpacing: 1.5, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 8),
-                      SelectableText(displayText, style: baseStyle),
+                      // --- THIS IS THE FIX FOR THE PREVIEW PANEL ---
+                      SelectableText.rich(
+                        parseRichText(
+                          displayText, 
+                          networkState.redleafService.apiUrl,
+                          graphState: graphState,
+                          networkState: networkState,
+                          context: context,
+                          currentNodeId: node.id
+                        ), 
+                        style: baseStyle
+                      ),
                       if (node.redleafPills.isNotEmpty) ...[
                         const SizedBox(height: 8),
                         Text("Attached Context: ${node.redleafPills.map((p) => p.text).join(', ')}", style: const TextStyle(color: Colors.white54, fontSize: 12, fontStyle: FontStyle.italic)),
