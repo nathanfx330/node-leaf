@@ -130,6 +130,11 @@ class WikiCouncilAgent {
         return;
     }
 
+    // --- NEW: Council Directive Context ---
+    String directiveContext = node.councilDirection.trim().isNotEmpty 
+        ? "\nCOUNCIL DIRECTIVE / FOCUS:\n${node.councilDirection.trim()}\nYou MUST tailor your analysis and debate specifically around this directive.\n" 
+        : "";
+
     // --- TURN 1: Initial Context Extraction ---
     node.ollamaResult += "\n> [System] Analyzing current knowledge state...\n"; onUpdate();
 
@@ -137,6 +142,8 @@ class WikiCouncilAgent {
     ? """Review the Target Wiki Page, its Historical Versions (if any), and the Upstream Context.
 Identify up to 3 core conceptual entities (People, Organizations, Specific Themes) that are missing, suffering from semantic drift, or controversial.
 Return ONLY a JSON object: {"core_entities": ["Entity 1", "Entity 2"]}
+
+$directiveContext
 
 TARGET WIKI PAGE (${node.wikiTitle}):
 $targetWikiText
@@ -147,6 +154,8 @@ ${upstreamContext.toString()}"""
     : """Review the provided upstream context.
 Identify up to 3 core conceptual entities (People, Organizations, Specific Themes) that are central to this topic.
 Return ONLY a JSON object: {"core_entities": ["Entity 1", "Entity 2"]}
+
+$directiveContext
 
 CONTEXT TO ANALYZE:
 ${upstreamContext.toString()}""";
@@ -221,12 +230,14 @@ ${upstreamContext.toString()}""";
 2. DO NOT break the 4th wall.
 3. You MUST aggressively critique the TARGET WIKI PAGE based on the new UPSTREAM CONTEXT. Point out what the Wiki page gets wrong or is missing.
 4. ANTI-DRIFT DIRECTIVE: If historical versions are provided, identify if accurate ground-truth facts were lost or distorted over time (Semantic Drift). Aggressively argue to restore them using Redleaf context as the ultimate authority.
-5. ANALYZE THE WIKI KNOWLEDGE GRAPH DATA. If the page is a dead-end, suggest what it should link to."""
+5. ANALYZE THE WIKI KNOWLEDGE GRAPH DATA. If the page is a dead-end, suggest what it should link to.
+$directiveContext"""
     : """CRITICAL INSTRUCTIONS:
 1. Act entirely in character as your assigned persona.
 2. DO NOT break the 4th wall.
 3. You MUST aggressively critique the research and point out flaws, missing data, or new angles. Find the 'white space' in the user's research.
-4. ANALYZE THE WIKI KNOWLEDGE GRAPH DATA. Suggest how this new research should connect to existing Wiki Hubs.""";
+4. ANALYZE THE WIKI KNOWLEDGE GRAPH DATA. Suggest how this new research should connect to existing Wiki Hubs.
+$directiveContext""";
 
     for (int i = 0; i < activeExperts.length; i++) {
         if (checkForceAnswer()) return;
@@ -301,6 +312,59 @@ ${debateTranscript.isEmpty ? "You are the first to speak. Begin the debate." : d
 
     if (checkForceAnswer()) return;
 
+    // --- NEW: INTERACTIVE DEBATE ("THE CHAIRMAN'S REVIEW") ---
+    if (node.councilInteractive) {
+        node.ollamaResult += "\n> [System] Pausing debate. Awaiting The Chairman's (User) input...\n\n";
+        onUpdate();
+        
+        String userFeedback = await networkState.waitForUserInput(node.id);
+        
+        if (checkForceAnswer()) return; // Abort if user clicked Stop/Force Answer
+        
+        if (userFeedback.trim().isNotEmpty) {
+            debateTranscript += "**The Chairman (User)**: $userFeedback\n\n";
+            node.ollamaResult += "**The Chairman**: $userFeedback\n\n"; 
+            onUpdate();
+            
+            node.ollamaResult += "> [System] The Council deliberates on The Chairman's feedback...\n\n";
+            onUpdate();
+            
+            // Have 2 agents respond to the Chairman's feedback
+            int agentsToRespond = activeExperts.length >= 2 ? 2 : activeExperts.length;
+            for (int i = 0; i < agentsToRespond; i++) {
+                if (checkForceAnswer()) return;
+                
+                // Pick agents starting from the end of the roster so it doesn't sound repetitive
+                final expert = activeExperts[activeExperts.length - 1 - i]; 
+                
+                node.ollamaResult += ">>> ${expert['name']} is responding to The Chairman...\n"; onUpdate();
+                
+                final responsePrompt = """${expert['prompt']}
+You are part of the Wiki Council. The Chairman (the user) has just provided feedback or a new direction for the debate.
+Respond directly to The Chairman's feedback in character, incorporating it into the overall debate. Keep it to one concise paragraph.
+
+DEBATE TRANSCRIPT SO FAR (Including The Chairman's input at the end):
+$debateTranscript""";
+
+                try {
+                  final responseText = await OllamaService.generateText(
+                    baseUrl: networkState.ollamaUrl,
+                    model: networkState.ollamaModel,
+                    prompt: responsePrompt,
+                  );
+                  
+                  debateTranscript += "**${expert['name']}**: $responseText\n\n";
+                  node.ollamaResult += "${expert['name']}: $responseText\n\n"; onUpdate();
+                } catch (e) {
+                  node.ollamaResult += "> [Agent Error during response: $e]\n"; onUpdate();
+                }
+            }
+        } else {
+            node.ollamaResult += "> [System] The Chairman passed. Proceeding to Director...\n\n";
+            onUpdate();
+        }
+    }
+
     // --- TURN 4: The Director (Synthesis) ---
     node.ollamaResult += "> [System] Debate concluded. Drafting final Council Report...\n\n"; onUpdate();
 
@@ -316,6 +380,7 @@ Your task is twofold:
 
 CRITICAL: You MUST use double brackets like [[Page Name]] to link concepts to other pages, especially if the debate suggested adding links.
 Include inline citations like [Doc X] if you use facts from the context.
+$directiveContext
 
 TARGET WIKI PAGE (ORIGINAL):
 $targetWikiText
@@ -333,6 +398,7 @@ Write a Council Audit Report containing:
 2. **Suggested New Pages:** A bulleted list of recommended new Wiki pages to create based on the debate. For each, write a 1-sentence prompt that the user can feed into a 'Deep Study' agent to kickstart it. 
 
 CRITICAL: Use double brackets like [[Page Name]] when referencing existing Wiki Hubs or proposing new ones.
+$directiveContext
 
 WIKI KNOWLEDGE GRAPH DATA:
 ${wikiGraphContext.toString()}

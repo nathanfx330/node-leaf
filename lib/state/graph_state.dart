@@ -853,6 +853,23 @@ class GraphState extends ChangeNotifier {
     }
   }
 
+  // --- NEW: Interactive / Directive state updaters ---
+  void updateCouncilDirection(String id, String direction) {
+    if (_nodes.containsKey(id)) {
+      requestUndoSnapshot();
+      _nodes[id]!.councilDirection = direction;
+      notifyListeners();
+    }
+  }
+
+  void toggleCouncilInteractive(String id, bool value) {
+    if (_nodes.containsKey(id)) {
+      requestUndoSnapshot();
+      _nodes[id]!.councilInteractive = value;
+      notifyListeners();
+    }
+  }
+
   void setNodeOllamaResult(String id, String result) {
     if (_nodes.containsKey(id)) {
       requestUndoSnapshot();

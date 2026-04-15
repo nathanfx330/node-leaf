@@ -43,7 +43,9 @@ class StoryNode {
   
   // --- NEW: Council Configuration ---
   int councilAgentCount;
-  bool councilAuditHistory; // <-- ADDED
+  bool councilAuditHistory;
+  String councilDirection;
+  bool councilInteractive;
 
   StoryNode({
     required this.id, required this.position, this.type = NodeType.scene,
@@ -57,7 +59,9 @@ class StoryNode {
     List<Map<String, dynamic>>? pinnedSearchResults, 
     this.wikiTitle = "", 
     this.councilAgentCount = 3, 
-    this.councilAuditHistory = false, // <-- ADDED
+    this.councilAuditHistory = false,
+    this.councilDirection = "",
+    this.councilInteractive = false,
   }) : nextNodeIds = nextNodeIds ?? [],
        redleafPills = redleafPills ?? [],
        chatHistory = chatHistory ?? [],
@@ -88,7 +92,9 @@ class StoryNode {
     'pinnedSearchResults': pinnedSearchResults, 
     'wikiTitle': wikiTitle, 
     'councilAgentCount': councilAgentCount,
-    'councilAuditHistory': councilAuditHistory, // <-- ADDED
+    'councilAuditHistory': councilAuditHistory,
+    'councilDirection': councilDirection,
+    'councilInteractive': councilInteractive,
   };
 
   factory StoryNode.fromJson(Map<String, dynamic> json) {
@@ -107,7 +113,7 @@ class StoryNode {
     if (json['type'] == 'NodeType.wikiReader') parsedType = NodeType.wikiReader; 
     if (json['type'] == 'NodeType.wikiWriter') parsedType = NodeType.wikiWriter; 
     if (json['type'] == 'NodeType.council') parsedType = NodeType.council; 
-    if (json['type'] == 'NodeType.researchParty') parsedType = NodeType.researchParty; // <-- ADDED
+    if (json['type'] == 'NodeType.researchParty') parsedType = NodeType.researchParty; 
 
     return StoryNode(
       id: json['id'],
@@ -130,7 +136,9 @@ class StoryNode {
           .toList() ?? [], 
       wikiTitle: json['wikiTitle'] ?? "", 
       councilAgentCount: json['councilAgentCount'] ?? 3,
-      councilAuditHistory: json['councilAuditHistory'] ?? false, // <-- ADDED
+      councilAuditHistory: json['councilAuditHistory'] ?? false,
+      councilDirection: json['councilDirection'] ?? "",
+      councilInteractive: json['councilInteractive'] ?? false,
     );
   }
 

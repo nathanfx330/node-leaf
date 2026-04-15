@@ -1,4 +1,5 @@
 // --- File: lib/state/network_state.dart ---
+import 'dart:async'; // <-- ADDED for Completer
 import 'package:flutter/material.dart';
 
 import '../constants.dart';
@@ -11,7 +12,7 @@ import '../agents/chat_agent.dart';
 import '../agents/wiki_writer_agent.dart';
 import '../agents/summarizer_agent.dart';
 import '../agents/output_agent.dart';
-import '../agents/research_party_agent.dart'; // <-- ADDED
+import '../agents/research_party_agent.dart'; 
 import 'graph_state.dart'; 
 
 class NetworkState extends ChangeNotifier {
@@ -34,6 +35,10 @@ class NetworkState extends ChangeNotifier {
   // --- Force Answer Flag ---
   bool _isForceAnswerTriggered = false;
 
+  // --- NEW: Interactive Input State ---
+  String? _waitingForInputNodeId;
+  Completer<String>? _inputCompleter;
+
   NetworkState() {
     fetchOllamaModels();
   }
@@ -52,6 +57,25 @@ class NetworkState extends ChangeNotifier {
   List<String> get availableModels => _availableModels;
   bool get isScanningModels => _isScanningModels;
   bool get isPreloadingModel => _isPreloadingModel;
+
+  // --- NEW: Interactive Getters/Methods ---
+  bool isNodeWaitingForInput(String nodeId) => _waitingForInputNodeId == nodeId;
+  
+  Future<String> waitForUserInput(String nodeId) async {
+    _waitingForInputNodeId = nodeId;
+    _inputCompleter = Completer<String>();
+    notifyListeners();
+    return _inputCompleter!.future;
+  }
+  
+  void submitUserInput(String input) {
+    if (_inputCompleter != null && !_inputCompleter!.isCompleted) {
+      _inputCompleter!.complete(input);
+    }
+    _waitingForInputNodeId = null;
+    _inputCompleter = null;
+    notifyListeners();
+  }
 
   // --- CONFIGURATION METHODS ---
 
@@ -178,11 +202,16 @@ class NetworkState extends ChangeNotifier {
   void forceAnswerNow() {
     if (_generatingNodeId != null) {
       _isForceAnswerTriggered = true;
+      // --- MODIFIED: Release the completer if the user stops execution during a pause ---
+      if (_inputCompleter != null && !_inputCompleter!.isCompleted) {
+        _inputCompleter!.complete("");
+        _waitingForInputNodeId = null;
+      }
       notifyListeners();
     }
   }
 
-  // --- LLM GENERATION PIPELINE ---
+  // --- LLM GENERATION PIPELINE (Unchanged) ---
 
   Future<void> triggerOllamaGeneration(StoryNode node, List<StoryNode> sequence, GraphState graphState) async {
     _generatingNodeId = node.id; 
@@ -297,7 +326,6 @@ class NetworkState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // --- ADDED ---
   Future<void> triggerResearchPartyLoop(StoryNode node, List<StoryNode> sequence, GraphState graphState) async {
     _generatingNodeId = node.id;
     _isForceAnswerTriggered = false;
