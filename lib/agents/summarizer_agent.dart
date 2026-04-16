@@ -46,9 +46,11 @@ class SummarizerAgent {
         upstreamContext.writeln(await networkState.redleafService.fetchAdvancedFtsContext(n.content, n.searchLimit, n.pinnedSearchResults));
         upstreamContext.writeln(">>> END REDLEAF SEARCH <<<\n");
       } else if (n.type == NodeType.document && n.content.isNotEmpty) {
+        // --- START FIX ---
         upstreamContext.writeln("\n>>> REDLEAF DOCUMENT <<<");
-        upstreamContext.writeln(await networkState.redleafService.fetchDocumentText(n.content));
+        upstreamContext.writeln(await networkState.redleafService.fetchDocumentText(n));
         upstreamContext.writeln(">>> END REDLEAF DOCUMENT <<<\n");
+        // --- END FIX ---
       } else if (n.type == NodeType.catalog && n.content.isNotEmpty) {
         final catId = int.tryParse(n.content);
         if (catId != null) {

@@ -76,7 +76,9 @@ class OutputAgent {
 
       if (n.type == NodeType.document && n.content.isNotEmpty) {
         node.ollamaResult = "🤖 Fetching Full Document #${n.content}...\n"; onUpdate();
-        final docContext = await networkState.redleafService.fetchDocumentText(n.content);
+        // --- START FIX ---
+        final docContext = await networkState.redleafService.fetchDocumentText(n);
+        // --- END FIX ---
         finalPrompt.writeln("\n>>> FACTUAL CONTEXT FROM REDLEAF DOCUMENT <<<");
         finalPrompt.writeln(docContext);
         finalPrompt.writeln(">>> END REDLEAF DOCUMENT <<<\n");

@@ -24,7 +24,8 @@ import 'panels/intersection_node_panel.dart';
 import 'panels/relationship_node_panel.dart';
 import 'panels/briefing_node_panel.dart';
 import 'panels/persona_node_panel.dart';
-import 'panels/research_party_node_panel.dart'; // <-- ADDED
+import 'panels/research_party_node_panel.dart'; 
+import 'panels/document_node_panel.dart'; // <-- NEW PANEL ADDED
 
 // EXPORT common UI elements so previously extracted panels don't break
 export 'dialogs/entity_search_dialog.dart';
@@ -175,7 +176,7 @@ class _SidePanelState extends State<SidePanel> {
     // Routing for Compact Tool Nodes
     if (node.type == NodeType.output) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: OutputNodePanel(nodeId: node.id));
     if (node.type == NodeType.search) return GlobalSearchNodePanel(nodeId: node.id);
-    if (node.type == NodeType.document) return _buildDocumentPanel(context, graphState, node);
+    if (node.type == NodeType.document) return DocumentNodePanel(nodeId: node.id); // <-- NEW ROUTING
     if (node.type == NodeType.relationship) return RelationshipNodePanel(nodeId: node.id);
     if (node.type == NodeType.catalog) return CatalogNodePanel(nodeId: node.id);
     if (node.type == NodeType.intersection) return IntersectionNodePanel(nodeId: node.id);
@@ -187,9 +188,9 @@ class _SidePanelState extends State<SidePanel> {
     if (node.type == NodeType.wikiReader) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: WikiReaderNodePanel(nodeId: node.id)); 
     if (node.type == NodeType.wikiWriter) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: WikiWriterNodePanel(nodeId: node.id)); 
     if (node.type == NodeType.council) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: CouncilNodePanel(nodeId: node.id)); 
-    if (node.type == NodeType.researchParty) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: ResearchPartyNodePanel(nodeId: node.id)); // <-- ADDED
+    if (node.type == NodeType.researchParty) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: ResearchPartyNodePanel(nodeId: node.id));
 
-    // --- FIX: Scratchpad Node is now a Dual-Tab Read/Edit interface ---
+    // --- Scratchpad Node (Dual-Tab Read/Edit interface) ---
     return DefaultTabController(
       length: 2,
       child: Container(
@@ -299,33 +300,6 @@ class _SidePanelState extends State<SidePanel> {
     );
   }
 
-  Widget _buildDocumentPanel(BuildContext context, GraphState graphState, StoryNode node) {
-    return Container(
-      color: const Color(0xFF1A1A1A), padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text("REDLEAF DOCUMENT READER", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
-          const SizedBox(height: 20),
-          const Text("Enter a Document ID (e.g. 12) or specific pages (e.g. id:12 + page:1-3):", style: TextStyle(color: Colors.white54, fontSize: 12)), 
-          const SizedBox(height: 5),
-          TextField(
-            controller: _contentCtrl, 
-            decoration: const InputDecoration(filled: true, fillColor: Color(0xFF222222), hintText: "e.g. 12"),
-            onChanged: (v) => graphState.updateNodeContent(node.id, v),
-          ),
-          const SizedBox(height: 20),
-          const Text("How this works:", style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 5),
-          const Text(
-            "When the graph compiles, this node will download the raw extracted text of the specific Document ID from your Redleaf database and inject it into the LLM context window.\n\n(Note: Very large documents will be automatically truncated to fit into the AI's memory).",
-            style: TextStyle(color: Colors.grey, fontSize: 12),
-          ),
-        ]
-      )
-    );
-  }
-  
   void _showAddPillDialog(BuildContext context, String nodeId) {
     showDialog(
       context: context,

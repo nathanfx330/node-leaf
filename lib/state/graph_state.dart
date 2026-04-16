@@ -814,6 +814,41 @@ class GraphState extends ChangeNotifier {
     }
   }
 
+  // --- NEW: Document Curation Updaters ---
+  
+  void togglePinnedComment(String id, Map<String, dynamic> comment) {
+    if (_nodes.containsKey(id)) {
+      requestUndoSnapshot();
+      final node = _nodes[id]!;
+      final existingIndex = node.pinnedComments.indexWhere((c) => c['id'] == comment['id']);
+      
+      if (existingIndex >= 0) {
+        node.pinnedComments.removeAt(existingIndex); // Unpin
+      } else {
+        // Pin with default context flags
+        node.pinnedComments.add({
+          ...comment,
+          'is_quote': false,
+          'is_commentary': true, // Default to commentary
+          'refers_to_doc': true, // Default to referring to the doc
+        });
+      }
+      notifyListeners();
+    }
+  }
+
+  void updatePinnedCommentContext(String nodeId, int commentId, String key, bool value) {
+    if (_nodes.containsKey(nodeId)) {
+      requestUndoSnapshot();
+      final node = _nodes[nodeId]!;
+      final index = node.pinnedComments.indexWhere((c) => c['id'] == commentId);
+      if (index >= 0) {
+        node.pinnedComments[index][key] = value;
+        notifyListeners();
+      }
+    }
+  }
+
   void clearChatHistory(String id) {
     if (_nodes.containsKey(id)) {
       requestUndoSnapshot();

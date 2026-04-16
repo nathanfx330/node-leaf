@@ -59,7 +59,9 @@ class DeepStudyAgent {
         final searchContext = await networkState.redleafService.fetchAdvancedFtsContext(n.content, n.searchLimit, n.pinnedSearchResults);
         upstreamContext.writeln("\n>>> REDLEAF GLOBAL SEARCH: '${n.content}' <<<\n$searchContext\n");
       } else if (n.type == NodeType.document && n.content.isNotEmpty) {
-        final docContext = await networkState.redleafService.fetchDocumentText(n.content);
+        // --- START FIX ---
+        final docContext = await networkState.redleafService.fetchDocumentText(n);
+        // --- END FIX ---
         upstreamContext.writeln("\n>>> REDLEAF DOCUMENT <<<\n$docContext\n");
       } else if (n.type == NodeType.catalog && n.content.isNotEmpty) {
         final catId = int.tryParse(n.content);

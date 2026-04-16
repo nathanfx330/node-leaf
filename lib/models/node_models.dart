@@ -38,6 +38,9 @@ class StoryNode {
   int searchLimit;
   List<Map<String, dynamic>> pinnedSearchResults;
 
+  // --- NEW: Document Curation Configurations ---
+  List<Map<String, dynamic>> pinnedComments;
+
   // --- NEW: Agentic Wiki Configuration ---
   String wikiTitle;
   
@@ -57,6 +60,7 @@ class StoryNode {
     List<Map<String, String>>? chatHistory, 
     this.searchLimit = 5, 
     List<Map<String, dynamic>>? pinnedSearchResults, 
+    List<Map<String, dynamic>>? pinnedComments,
     this.wikiTitle = "", 
     this.councilAgentCount = 3, 
     this.councilAuditHistory = false,
@@ -65,7 +69,8 @@ class StoryNode {
   }) : nextNodeIds = nextNodeIds ?? [],
        redleafPills = redleafPills ?? [],
        chatHistory = chatHistory ?? [],
-       pinnedSearchResults = pinnedSearchResults ?? []; 
+       pinnedSearchResults = pinnedSearchResults ?? [],
+       pinnedComments = pinnedComments ?? []; 
 
   // True for tools/actions, False for Scratchpad (which shows text preview)
   bool get isCompactToolNode => type != NodeType.scene;
@@ -90,6 +95,7 @@ class StoryNode {
     'chatHistory': chatHistory, 
     'searchLimit': searchLimit, 
     'pinnedSearchResults': pinnedSearchResults, 
+    'pinnedComments': pinnedComments,
     'wikiTitle': wikiTitle, 
     'councilAgentCount': councilAgentCount,
     'councilAuditHistory': councilAuditHistory,
@@ -132,6 +138,9 @@ class StoryNode {
           .toList() ?? [], 
       searchLimit: json['searchLimit'] ?? 5, 
       pinnedSearchResults: (json['pinnedSearchResults'] as List?)
+          ?.map((e) => Map<String, dynamic>.from(e as Map))
+          .toList() ?? [], 
+      pinnedComments: (json['pinnedComments'] as List?)
           ?.map((e) => Map<String, dynamic>.from(e as Map))
           .toList() ?? [], 
       wikiTitle: json['wikiTitle'] ?? "", 

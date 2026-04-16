@@ -10,7 +10,7 @@ class RedleafService {
   String apiUrl = "http://127.0.0.1:5000";
   String username = "";
   String password = "";
-  String redleafBaseDir = ""; // <-- ADDED
+  String redleafBaseDir = ""; 
   
   String _cookie = "";
   String _csrfToken = "";
@@ -84,7 +84,7 @@ class RedleafService {
       );
       if (res.statusCode == 200) {
         final data = _safeJsonDecode(res);
-        redleafBaseDir = data['base_dir'] ?? ""; // <-- ADDED
+        redleafBaseDir = data['base_dir'] ?? ""; 
         return data['instance_id'];
       }
     } catch (e) {
@@ -93,7 +93,6 @@ class RedleafService {
     return null;
   }
   
-  // --- NEW: Fetch System Briefing / Territory Map ---
   Future<String> fetchSystemBriefing() async {
     if (!await _ensureAuth()) return "[Auth Error: Not connected to Redleaf]";
     try {
@@ -193,7 +192,6 @@ class RedleafService {
       }
 
       if (limit > 0) {
-        // --- FIX: Removed &mode=fts. The AI Agent needs Semantic Search! ---
         final res = await http.get(
           Uri.parse('$apiUrl/api/search?q=${Uri.encodeComponent(query)}&limit=$limit'), 
           headers: {'Cookie': _cookie}
@@ -227,7 +225,6 @@ class RedleafService {
     
     List<Map<String, dynamic>> output = [];
     try {
-      // --- This remains &mode=fts because humans want instant UI feedback ---
       final url = Uri.parse('$apiUrl/api/search?q=${Uri.encodeComponent(query)}&mode=fts');
       final res = await http.get(url, headers: {'Cookie': _cookie});
       
@@ -252,9 +249,11 @@ class RedleafService {
     return output;
   }
 
-  Future<String> fetchDocumentText(String inputStr) async {
+  // --- MODIFIED: fetchDocumentText now accepts a StoryNode ---
+  Future<String> fetchDocumentText(StoryNode node) async {
     if (!await _ensureAuth()) return "[Auth Error: Not connected to Redleaf]";
     try {
+      final inputStr = node.content; // Use node content for parsing
       int? docId;
       int? startPage;
       int? endPage;
@@ -290,11 +289,52 @@ class RedleafService {
         if (data['success'] == true) {
           String text = data['text'] ?? '';
           if (text.length > 4000) text = "${text.substring(0, 4000)}\n\n... [Document Truncated for AI Context] ...";
-          return "[Redleaf Raw Text for Document #$docId${startPage != null ? ' (Pages $startPage-$endPage)' : ''}]:\n$text";
+          
+          // --- NEW: INJECT CURATION DATA ---
+          StringBuffer finalOutput = StringBuffer();
+          finalOutput.writeln("[Redleaf Raw Text for Document #$docId${startPage != null ? ' (Pages $startPage-$endPage)' : ''}]:\n$text");
+
+          if (node.pinnedComments.isNotEmpty) {
+            finalOutput.writeln("\n\n>>> HUMAN CURATION FOR DOCUMENT #$docId <<<");
+            for (var comment in node.pinnedComments) {
+              finalOutput.writeln("---");
+              if (comment['is_quote'] == true) finalOutput.writeln("TYPE: Direct Quote from Document");
+              if (comment['is_commentary'] == true) finalOutput.writeln("TYPE: Research Commentary");
+              if (comment['refers_to_doc'] == true) finalOutput.writeln("CONTEXT: This refers directly to the document above.");
+              finalOutput.writeln("ANNOTATION BY ${comment['username']}: \"${comment['comment_text']}\"");
+            }
+            finalOutput.writeln(">>> END HUMAN CURATION <<<");
+          }
+
+          return finalOutput.toString();
         }
       }
     } catch (e) { debugPrint("Doc fetch error: $e"); }
-    return "[Error fetching Document data for input: $inputStr]";
+    return "[Error fetching Document data for input: ${node.content}]";
+  }
+
+  // --- NEW: Fetch Comments directly for the UI Panel ---
+  Future<List<dynamic>> fetchCommentsForDocument(String docIdStr) async {
+    if (!await _ensureAuth()) return [];
+    
+    // Clean up the input string to just get the ID (same logic as fetchDocumentText)
+    final match = RegExp(r'(?:id:\s*)?(\d+)').firstMatch(docIdStr.trim());
+    final docId = match != null ? match.group(1) : docIdStr.trim();
+    if (docId == null || docId.isEmpty) return [];
+
+    try {
+      final url = Uri.parse('$apiUrl/api/document/$docId/curation');
+      // Pass the cookie so Flask knows we are authenticated
+      final res = await http.get(url, headers: {'Cookie': _cookie}); 
+      
+      if (res.statusCode == 200) {
+        final data = _safeJsonDecode(res);
+        return data['comments'] ?? []; 
+      }
+    } catch (e) {
+      debugPrint("Failed to fetch comments for Doc $docId: $e");
+    }
+    return [];
   }
 
   Future<List<Map<String, dynamic>>> fetchAllCatalogs() async {
