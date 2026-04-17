@@ -6,8 +6,8 @@ import 'package:provider/provider.dart';
 import '../../constants.dart';
 import '../../state/graph_state.dart';
 import '../../state/canvas_state.dart';
-import '../../state/network_state.dart'; // <-- Needed for apiUrl
-import '../side_panel.dart'; // <-- Needed for parseRichText
+import '../../state/network_state.dart'; 
+import '../side_panel.dart'; 
 
 class PreviewPanel extends StatelessWidget {
   final String? targetNodeId;
@@ -17,7 +17,7 @@ class PreviewPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final graphState = context.watch<GraphState>();
     final canvasState = context.read<CanvasState>();
-    final networkState = context.watch<NetworkState>(); // <-- Added
+    final networkState = context.watch<NetworkState>(); 
     final nodes = graphState.getCompiledNodes(targetNodeId);
 
     if (nodes.length <= 1) { 
@@ -62,6 +62,9 @@ class PreviewPanel extends StatelessWidget {
             itemBuilder: (ctx, i) {
               final node = nodes[i];
               if (node.type == NodeType.output || node.type == NodeType.chat || node.type == NodeType.wikiWriter || node.type == NodeType.council) return const SizedBox(height: 50, child: Divider(color: Colors.white24));
+              
+              // --- FIX: Skip rendering Merge nodes entirely in the preview ---
+              if (node.type == NodeType.merge) return const SizedBox.shrink();
               
               final baseStyle = const TextStyle(fontSize: 16, height: 1.6, color: Colors.white70);
               final nodeIndex = graphState.getNodeIndex(node.id);

@@ -25,7 +25,8 @@ import 'panels/relationship_node_panel.dart';
 import 'panels/briefing_node_panel.dart';
 import 'panels/persona_node_panel.dart';
 import 'panels/research_party_node_panel.dart'; 
-import 'panels/document_node_panel.dart'; // <-- NEW PANEL ADDED
+import 'panels/document_node_panel.dart'; 
+import 'panels/merge_node_panel.dart'; // <-- NEW PANEL ADDED
 
 // EXPORT common UI elements so previously extracted panels don't break
 export 'dialogs/entity_search_dialog.dart';
@@ -176,10 +177,11 @@ class _SidePanelState extends State<SidePanel> {
     // Routing for Compact Tool Nodes
     if (node.type == NodeType.output) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: OutputNodePanel(nodeId: node.id));
     if (node.type == NodeType.search) return GlobalSearchNodePanel(nodeId: node.id);
-    if (node.type == NodeType.document) return DocumentNodePanel(nodeId: node.id); // <-- NEW ROUTING
+    if (node.type == NodeType.document) return DocumentNodePanel(nodeId: node.id);
     if (node.type == NodeType.relationship) return RelationshipNodePanel(nodeId: node.id);
     if (node.type == NodeType.catalog) return CatalogNodePanel(nodeId: node.id);
     if (node.type == NodeType.intersection) return IntersectionNodePanel(nodeId: node.id);
+    if (node.type == NodeType.merge) return MergeNodePanel(nodeId: node.id); // <-- ADDED ROUTING
     if (node.type == NodeType.chat) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: ChatNodePanel(nodeId: node.id)); 
     if (node.type == NodeType.briefing) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: BriefingNodePanel(nodeId: node.id));
     if (node.type == NodeType.study) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: StudyNodePanel(nodeId: node.id)); 

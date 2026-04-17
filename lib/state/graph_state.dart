@@ -2,9 +2,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math; 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/foundation.dart'; // <-- ADDED for compute()
+import 'package:flutter/foundation.dart'; 
 import 'package:uuid/uuid.dart';
 import 'package:file_picker/file_picker.dart';
 
@@ -115,6 +116,9 @@ class GraphState extends ChangeNotifier {
   // --- NEW: WIKI KNOWLEDGE GRAPH ---
   Map<String, double> _wikiNodeRanks = {};
   Map<String, List<String>> _wikiOutgoingLinks = {};
+  
+  // --- FIX: Strict Port Memory for Merge Nodes ---
+  final Map<String, List<String>> _mergePorts = {};
 
   // Getters
   Map<String, StoryNode> get nodes => _nodes;
@@ -133,6 +137,7 @@ class GraphState extends ChangeNotifier {
   void newProject(NetworkState networkState) {
     _nodes.clear(); 
     _undoStack.clear(); 
+    _mergePorts.clear(); // Clear port memory
     _projectName = "Untitled"; 
     _activeFilePath = null;
     _selectedNodeIds.clear(); 
@@ -237,6 +242,7 @@ class GraphState extends ChangeNotifier {
       final Map<String, dynamic> data = jsonDecode(jsonStr);
       _nodes.clear(); 
       _undoStack.clear();
+      _mergePorts.clear(); // Clear port memory
       _projectName = data['name'] ?? "Untitled"; 
       
       networkState.loadNetworkConfig(
@@ -494,6 +500,7 @@ class GraphState extends ChangeNotifier {
     if (type == NodeType.wikiWriter) title = "Wiki Writer"; 
     if (type == NodeType.council) title = "Wiki Council";
     if (type == NodeType.researchParty) title = "Research Party";
+    if (type == NodeType.merge) title = "Merge Context"; // ADDED
 
     _nodes[id] = StoryNode(id: id, position: centerPos - const Offset(kNodeWidth / 2, kNodeHeight / 2), title: title, type: type);
     _selectedNodeIds = {id};
@@ -553,15 +560,138 @@ class GraphState extends ChangeNotifier {
     notifyListeners(); 
   }
 
-  // --- GRAPH TOPOLOGY (WIRES) ---
+  // --- GRAPH TOPOLOGY (WIRES & PORTS) ---
 
-  void connectNode(String sourceId, String targetId) {
+  // --- FIX: Expose strict port memory for Merge Nodes ---
+  List<String> getMergePorts(String targetId) {
+    if (!_mergePorts.containsKey(targetId)) {
+        List<String> incoming = [];
+        for (var node in _nodes.values) {
+            if (node.nextNodeIds.contains(targetId)) incoming.add(node.id);
+        }
+        // First-time init: Sort by X to make it look nice
+        incoming.sort((a, b) => _nodes[a]!.position.dx.compareTo(_nodes[b]!.position.dx));
+        
+        _mergePorts[targetId] = [
+            incoming.isNotEmpty ? incoming[0] : "",
+            incoming.length > 1 ? incoming[1] : "",
+            incoming.length > 2 ? incoming[2] : ""
+        ];
+    }
+    
+    // Auto-clean dead links if a node was deleted or disconnected
+    List<String> ports = _mergePorts[targetId]!;
+    for(int i=0; i<3; i++) {
+        if (ports[i].isNotEmpty) {
+            if (_nodes[ports[i]] == null || !_nodes[ports[i]]!.nextNodeIds.contains(targetId)) {
+                ports[i] = "";
+            }
+        }
+    }
+    return ports;
+  }
+
+  List<String> getIncomingNodes(String targetId) {
+    final target = _nodes[targetId];
+    if (target != null && target.type == NodeType.merge) {
+        // Return exactly in the order of Port 0, Port 1, Port 2
+        return getMergePorts(targetId).where((id) => id.isNotEmpty).toList();
+    }
+
+    // Standard logic for all other nodes
+    List<String> incoming = [];
+    for (var node in _nodes.values) {
+      if (node.nextNodeIds.contains(targetId)) incoming.add(node.id);
+    }
+    incoming.sort((a, b) => _nodes[a]!.position.dx.compareTo(_nodes[b]!.position.dx));
+    return incoming;
+  }
+
+  double getNodeWidth(String nodeId) {
+    final node = _nodes[nodeId];
+    if (node == null) return kNodeWidth;
+    return kNodeWidth; 
+  }
+
+  // --- FIX: Add forcePortIndex to accurately draw dragging wires ---
+  Offset getInputPortGlobal(String targetId, String? sourceId, {int? forcePortIndex}) {
+    final target = _nodes[targetId];
+    if (target == null) return Offset.zero;
+    if (target.type != NodeType.merge) return target.inputPortGlobal;
+
+    double width = getNodeWidth(targetId);
+    double spacing = width / 3;
+    int portIndex = -1;
+    
+    if (forcePortIndex != null) {
+        portIndex = forcePortIndex;
+    } else if (sourceId != null) {
+        List<String> ports = getMergePorts(targetId);
+        portIndex = ports.indexOf(sourceId);
+    }
+    
+    // If not connected yet, try to find an empty port
+    if (portIndex == -1) {
+        List<String> ports = getMergePorts(targetId);
+        portIndex = ports.indexOf("");
+        
+        // If it's totally full, we'll default to visually pointing at the right side
+        // to prevent an error, though it won't stay there if dropped.
+        if (portIndex == -1) portIndex = 2; 
+    }
+
+    double offsetX = (spacing / 2) + (portIndex * spacing);
+
+    return target.position + Offset(offsetX, 0);
+  }
+
+  Offset getOutputPortGlobal(String nodeId) {
+    final node = _nodes[nodeId];
+    if (node == null) return Offset.zero;
+    double width = getNodeWidth(nodeId);
+    return node.position + Offset(width / 2, node.currentHeight);
+  }
+
+  // --- FIX: Strict connection assignment ---
+  void connectNode(String sourceId, String targetId, {int? portIndex}) {
     recordUndo();
     final source = _nodes[sourceId]!;
-    for (var n in _nodes.values) { 
-      if (n.nextNodeIds.contains(targetId)) n.nextNodeIds.remove(targetId); 
+    final target = _nodes[targetId];
+    if (target == null) return;
+    
+    if (target.type == NodeType.merge) {
+      List<String> ports = getMergePorts(targetId);
+      
+      // If moving an existing wire to a new port, clear the old one first
+      int oldIndex = ports.indexOf(sourceId);
+      if (oldIndex != -1) {
+          ports[oldIndex] = "";
+      }
+
+      int targetPort = portIndex ?? ports.indexOf("");
+      if (targetPort == -1) targetPort = 2; // Overwrite the 3rd slot if full
+      
+      // Kick out the old occupant
+      if (ports[targetPort].isNotEmpty) {
+          String nodeToDisconnect = ports[targetPort];
+          _nodes[nodeToDisconnect]?.nextNodeIds.remove(targetId);
+      }
+      
+      // Lock in the new connection
+      ports[targetPort] = sourceId;
+      _mergePorts[targetId] = ports;
+      
+    } else {
+      // Standard behavior: Disconnect ANY existing wires going into this node
+      for (var n in _nodes.values) { 
+        if (n.nextNodeIds.contains(targetId)) n.nextNodeIds.remove(targetId); 
+      }
     }
-    source.nextNodeIds.add(targetId); 
+    
+    if (!source.nextNodeIds.contains(targetId)) {
+        source.nextNodeIds.add(targetId); 
+    }
+    
     recalculateSequence();
     notifyListeners();
   }
@@ -677,85 +807,102 @@ class GraphState extends ChangeNotifier {
     } catch (e) { debugPrint("Paste Error: $e"); } 
   }
 
-  // --- DAG (DIRECTED ACYCLIC GRAPH) LOGIC ---
+  // --- DAG LOGIC ---
 
-  void recalculateSequence() {
-    _nodeSequence.clear(); 
-    _activePathIds.clear();
-    List<StoryNode> targetNodes = _nodes.values.where((n) => 
-      n.type == NodeType.output || 
-      n.type == NodeType.chat || 
-      n.type == NodeType.study || 
-      n.type == NodeType.summarize ||
-      n.type == NodeType.wikiWriter ||
-      n.type == NodeType.council ||
-      n.type == NodeType.researchParty
-    ).toList();
-    
-    if (targetNodes.isEmpty) return;
-
-    Map<String, String> parents = {};
-    for (var node in _nodes.values) { 
-      for (var childId in node.nextNodeIds) { 
-        if (!parents.containsKey(childId) || node.nextNodeIds.indexOf(childId) == 0) parents[childId] = node.id; 
-      } 
+  List<String> _getTopologicalPath(String targetId) {
+    Map<String, List<String>> incoming = {};
+    for (var n in _nodes.values) {
+      for (var child in n.nextNodeIds) {
+        incoming.putIfAbsent(child, () => []).add(n.id);
+      }
     }
 
-    for (var target in targetNodes) {
-      String? curr = target.id;
-      List<String> path = [];
-      int safe = 0;
-      while (curr != null && safe < 1000) { 
-        path.add(curr); 
-        _activePathIds.add(curr); 
-        curr = parents[curr]; 
-        safe++; 
+    Set<String> ancestors = {targetId};
+    List<String> queue = [targetId];
+    while (queue.isNotEmpty) {
+      String curr = queue.removeLast();
+      for (var p in incoming[curr] ?? []) {
+        if (ancestors.add(p)) queue.add(p);
       }
-      path = path.reversed.toList();
-      for (int i = 0; i < path.length; i++) { 
-        if (_nodes[path[i]]?.type == NodeType.scene) _nodeSequence[path[i]] = i + 1; 
+    }
+
+    Map<String, int> inDegree = { for (var a in ancestors) a: 0 };
+    for (var a in ancestors) {
+      for (var child in _nodes[a]!.nextNodeIds) {
+        if (ancestors.contains(child)) {
+          inDegree[child] = inDegree[child]! + 1;
+        }
+      }
+    }
+
+    // Tie-breaker: evaluate left-to-right (or port-by-port for merges)
+    List<String> zeroIn = inDegree.keys.where((k) => inDegree[k] == 0).toList();
+    zeroIn.sort((a, b) => _nodes[a]!.position.dx.compareTo(_nodes[b]!.position.dx));
+
+    List<String> sortedPath = [];
+    while (zeroIn.isNotEmpty) {
+      String id = zeroIn.removeAt(0);
+      sortedPath.add(id);
+      for (var child in _nodes[id]!.nextNodeIds) {
+        if (ancestors.contains(child)) {
+          inDegree[child] = inDegree[child]! - 1;
+          if (inDegree[child] == 0) {
+            zeroIn.add(child);
+            zeroIn.sort((a, b) => _nodes[a]!.position.dx.compareTo(_nodes[b]!.position.dx));
+          }
+        }
+      }
+    }
+    return sortedPath;
+  }
+
+  void recalculateSequence() {
+    _nodeSequence.clear();
+    _activePathIds.clear();
+    List<StoryNode> targetNodes = _nodes.values.where((n) =>
+      n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study ||
+      n.type == NodeType.summarize || n.type == NodeType.wikiWriter ||
+      n.type == NodeType.council || n.type == NodeType.researchParty
+    ).toList();
+
+    if (targetNodes.isEmpty) return;
+
+    for (var target in targetNodes) {
+      List<String> path = _getTopologicalPath(target.id);
+      _activePathIds.addAll(path);
+
+      int counter = 1;
+      for (var id in path) {
+        if (_nodes[id]?.type == NodeType.scene) {
+          _nodeSequence[id] = counter++;
+        }
       }
     }
   }
 
   List<StoryNode> getCompiledNodes([String? targetId]) {
     String? curr = targetId ?? _previewNodeId;
-    if (curr == null) { 
-      try { 
-        curr = _nodes.values.firstWhere((n) => 
-          n.type == NodeType.output || 
-          n.type == NodeType.chat || 
-          n.type == NodeType.study || 
-          n.type == NodeType.summarize ||
-          n.type == NodeType.wikiWriter ||
-          n.type == NodeType.council ||
-          n.type == NodeType.researchParty
-        ).id; 
-      } 
-      catch (_) { return []; } 
+    if (curr == null) {
+      try {
+        curr = _nodes.values.firstWhere((n) =>
+          n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study ||
+          n.type == NodeType.summarize || n.type == NodeType.wikiWriter ||
+          n.type == NodeType.council || n.type == NodeType.researchParty
+        ).id;
+      } catch (_) { return []; }
     }
     
-    Map<String, String> parents = {};
-    for (var n in _nodes.values) { 
-      for (var childId in n.nextNodeIds) { 
-        if (!parents.containsKey(childId) || n.nextNodeIds.indexOf(childId) == 0) parents[childId] = n.id; 
-      } 
-    }
-    
-    List<StoryNode> path = [];
-    int safety = 0;
-    while (curr != null && safety < 1000) { 
-      if (_nodes[curr] != null) path.add(_nodes[curr]!); 
-      curr = parents[curr]; 
-      safety++; 
-    }
-    return path.reversed.toList();
+    final pathIds = _getTopologicalPath(curr);
+    return pathIds.map((id) => _nodes[id]!).toList();
   }
 
   String getCompiledRawText(List<StoryNode> nodesToCompile) {
     StringBuffer buffer = StringBuffer();
     for (var node in nodesToCompile) {
+      // --- START OF FIX ---
+      // We skip the Merge node exactly like we skip standard tool nodes
       if (node.type != NodeType.scene) continue; 
+      // --- END OF FIX ---
       buffer.writeln(node.title.toUpperCase()); 
       buffer.writeln(node.content); 
       buffer.writeln("\n---\n"); 

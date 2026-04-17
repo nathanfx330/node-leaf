@@ -12,6 +12,6 @@ const Color kAccentColor = Color(0xFFA22323);
 
 const Color kSelectGlowColor = Color(0xFFFFD700); 
 
-// Added 'persona', 'summarize', 'wikiReader', 'wikiWriter', 'council', and 'researchParty' to the NodeType enum
-enum NodeType { scene, output, search, document, relationship, catalog, intersection, chat, briefing, study, persona, summarize, wikiReader, wikiWriter, council, researchParty } 
+// Added 'persona', 'summarize', 'wikiReader', 'wikiWriter', 'council', 'researchParty', and 'merge' to the NodeType enum
+enum NodeType { scene, output, search, document, relationship, catalog, intersection, chat, briefing, study, persona, summarize, wikiReader, wikiWriter, council, researchParty, merge } 
 enum AuthStatus { none, testing, success, error, mismatch }

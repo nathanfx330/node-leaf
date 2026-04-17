@@ -127,6 +127,7 @@ class _MainLayoutState extends State<MainLayout> {
                               PopupMenuItem(value: NodeType.wikiWriter, child: Text("🖋️ Add Wiki Writer")),
                               PopupMenuItem(value: NodeType.council, child: Text("🏛️ Add Wiki Council")), 
                               PopupMenuItem(value: NodeType.researchParty, child: Text("🏕️ Add Research Party")), 
+                              PopupMenuItem(value: NodeType.merge, child: Text("🔀 Add Merge Context")), 
                             ],
                             child: FloatingActionButton.extended(
                               backgroundColor: kNodeBg, foregroundColor: Colors.white,

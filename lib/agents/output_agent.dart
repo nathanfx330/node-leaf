@@ -36,7 +36,8 @@ class OutputAgent {
 
     // 1. Gather Context
     for (var n in sequence) {
-      if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study || n.type == NodeType.summarize || n.type == NodeType.wikiWriter || n.type == NodeType.council) continue; 
+      // --- FIX: Added merge and researchParty to the ignore list ---
+      if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study || n.type == NodeType.summarize || n.type == NodeType.wikiWriter || n.type == NodeType.council || n.type == NodeType.researchParty || n.type == NodeType.merge) continue; 
 
       if (n.type == NodeType.persona) {
         customPersona = n.content.trim();
@@ -76,9 +77,7 @@ class OutputAgent {
 
       if (n.type == NodeType.document && n.content.isNotEmpty) {
         node.ollamaResult = "🤖 Fetching Full Document #${n.content}...\n"; onUpdate();
-        // --- START FIX ---
         final docContext = await networkState.redleafService.fetchDocumentText(n);
-        // --- END FIX ---
         finalPrompt.writeln("\n>>> FACTUAL CONTEXT FROM REDLEAF DOCUMENT <<<");
         finalPrompt.writeln(docContext);
         finalPrompt.writeln(">>> END REDLEAF DOCUMENT <<<\n");

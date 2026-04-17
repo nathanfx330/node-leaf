@@ -78,6 +78,8 @@ class StoryNode {
   // Dynamically calculate height based on node type
   double get currentHeight => isCompactToolNode ? kPillHeight : kNodeHeight;
 
+  // Note: These getters assume default width. The actual visual routing 
+  // for the Merge node is now handled by helpers in GraphState.
   Offset get inputPortLocal => const Offset(kNodeWidth / 2, 0);
   Offset get outputPortLocal => Offset(kNodeWidth / 2, currentHeight);
   Offset get inputPortGlobal => position + inputPortLocal;
@@ -120,6 +122,7 @@ class StoryNode {
     if (json['type'] == 'NodeType.wikiWriter') parsedType = NodeType.wikiWriter; 
     if (json['type'] == 'NodeType.council') parsedType = NodeType.council; 
     if (json['type'] == 'NodeType.researchParty') parsedType = NodeType.researchParty; 
+    if (json['type'] == 'NodeType.merge') parsedType = NodeType.merge; // ADDED
 
     return StoryNode(
       id: json['id'],

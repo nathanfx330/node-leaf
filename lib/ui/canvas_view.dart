@@ -1,4 +1,5 @@
 // --- File: lib/ui/canvas_view.dart ---
+import 'dart:math' as math;
 import 'package:flutter/gestures.dart'; 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -64,6 +65,7 @@ class _NodeCanvasState extends State<NodeCanvas> {
                 PopupMenuItem(value: NodeType.wikiWriter, child: Text("🖋️ Add Wiki Writer")),
                 PopupMenuItem(value: NodeType.council, child: Text("🏛️ Add Wiki Council")), 
                 PopupMenuItem(value: NodeType.researchParty, child: Text("🏕️ Add Research Party")), 
+                PopupMenuItem(value: NodeType.merge, child: Text("🔀 Add Merge Context")), 
               ],
             ).then((type) {
               if (type != null) graphState.addNode(canvasPos, type);
@@ -231,6 +233,11 @@ class _NodeVisualState extends State<NodeVisual> {
         displayTitle = node.content.isEmpty ? "RESEARCH PARTY" : "PARTY: ${node.content}";
         iconColor = Colors.tealAccent;
         break;
+      case NodeType.merge: 
+        iconData = Icons.mediation;
+        displayTitle = "MERGE CONTEXT";
+        iconColor = Colors.yellowAccent;
+        break;
       default:
         iconData = Icons.extension;
         displayTitle = "TOOL";
@@ -242,18 +249,21 @@ class _NodeVisualState extends State<NodeVisual> {
       children: [
         if ((node.type == NodeType.output || node.type == NodeType.chat || node.type == NodeType.study || node.type == NodeType.summarize || node.type == NodeType.wikiWriter || node.type == NodeType.council || node.type == NodeType.researchParty) && isGenerating) 
           const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
-        else 
+        else if (node.type != NodeType.merge)
           Icon(iconData, size: 24, color: iconColor), 
-        const SizedBox(width: 12),
+        
+        if (node.type != NodeType.merge)
+          const SizedBox(width: 12),
+        
         Flexible(
           child: Text(
             displayTitle, 
             overflow: TextOverflow.ellipsis, 
             maxLines: 2,
-            textAlign: TextAlign.left, 
-            style: const TextStyle(
+            textAlign: node.type == NodeType.merge ? TextAlign.center : TextAlign.left, 
+            style: TextStyle(
               fontWeight: FontWeight.w900, 
-              color: Colors.white, 
+              color: node.type == NodeType.merge ? iconColor : Colors.white, 
               letterSpacing: 1.2,
               fontSize: 14, 
               height: 1.2
@@ -306,8 +316,8 @@ class _NodeVisualState extends State<NodeVisual> {
 
   @override
   Widget build(BuildContext context) {
-    final graphState = context.read<GraphState>();
-    final canvasState = context.read<CanvasState>();
+    final graphState = context.watch<GraphState>();
+    final canvasState = context.watch<CanvasState>();
     
     final nodeId = widget.nodeId;
     final node = graphState.nodes[nodeId]!;
@@ -325,6 +335,7 @@ class _NodeVisualState extends State<NodeVisual> {
       (node.type == NodeType.output || node.type == NodeType.chat || node.type == NodeType.study || node.type == NodeType.summarize || node.type == NodeType.wikiWriter || node.type == NodeType.council || node.type == NodeType.researchParty);
     
     final double height = node.currentHeight;
+    final double width = graphState.getNodeWidth(nodeId); 
     final double borderRadius = node.isCompactToolNode ? (height / 2) : 12.0;
 
     Color borderColor = const Color(0xFF666666); 
@@ -359,6 +370,57 @@ class _NodeVisualState extends State<NodeVisual> {
 
     Color pillBackgroundColor = isActive ? const Color(0xFF2E402E) : const Color(0xFF2A2A2A);
 
+    // Calculate dynamic input ports (FIXED 3 PORTS FOR MERGE NODE)
+    List<Widget> inputPorts = [];
+    if (node.type == NodeType.merge) {
+      final incoming = graphState.getIncomingNodes(nodeId);
+      int portCount = 3; // Hardcoded to 3
+      double spacing = width / portCount;
+
+      int snapPortIndex = incoming.length;
+      if (canvasState.draggingWireSourceId != null && incoming.contains(canvasState.draggingWireSourceId)) {
+        snapPortIndex = incoming.indexOf(canvasState.draggingWireSourceId!);
+      }
+      if (snapPortIndex > 2) snapPortIndex = 2; // Cap at 3rd port visually
+
+      for (int i = 0; i < portCount; i++) {
+        bool isHoveringThisPort = isHoverTarget && !isCycleHover && (i == snapPortIndex);
+        // It is considered "connected" if there's a wire for this index, 
+        // OR if we are on the 3rd port and there are 3 or MORE wires total.
+        bool isConnected = i < incoming.length || (i == 2 && incoming.length >= 3);
+        
+        inputPorts.add(
+          Positioned(
+            top: -9,
+            left: (spacing / 2) + (i * spacing) - 9, 
+            child: Container(
+              width: 18, height: 18,
+              decoration: BoxDecoration(
+                color: isHoveringThisPort ? kSelectGlowColor : (isConnected ? Colors.greenAccent : const Color(0xFF222222)),
+                shape: BoxShape.circle,
+                border: Border.all(color: isHoveringThisPort ? Colors.white : (isConnected ? Colors.white : Colors.white54), width: 2.0)
+              )
+            )
+          )
+        );
+      }
+    } else {
+      // Standard single input port
+      inputPorts.add(
+        Positioned(
+          top: -9, left: (width / 2) - 9,
+          child: Container(
+            width: 18, height: 18, 
+            decoration: BoxDecoration(
+              color: (isHoverTarget && !isCycleHover) ? kSelectGlowColor : const Color(0xFF222222), 
+              shape: BoxShape.circle, 
+              border: Border.all(color: isCycleHover ? Colors.red : (isSelected ? kSelectGlowColor : Colors.white), width: 2.0)
+            ),
+          ),
+        )
+      );
+    }
+
     return GestureDetector(
       onPanStart: (d) {
         graphState.requestUndoSnapshot(); 
@@ -378,7 +440,7 @@ class _NodeVisualState extends State<NodeVisual> {
         duration: const Duration(milliseconds: 200),
         opacity: isActive || isSelected || isPreview ? 1.0 : 0.65,
         child: SizedBox(
-          width: kNodeWidth, 
+          width: width, 
           height: height,
           child: Stack(
             clipBehavior: Clip.none,
@@ -402,50 +464,35 @@ class _NodeVisualState extends State<NodeVisual> {
                 ),
               ),
 
-              Positioned(
-                top: -9, 
-                left: 0, right: 0,
-                child: Center(
-                  child: Container(
-                    width: 18, height: 18, 
-                    decoration: BoxDecoration(
-                      color: (isHoverTarget && !isCycleHover) ? kSelectGlowColor : const Color(0xFF222222), 
-                      shape: BoxShape.circle, 
-                      border: Border.all(color: isCycleHover ? Colors.red : (isSelected ? kSelectGlowColor : Colors.white), width: 2.0)
-                    ),
-                  ),
-                ),
-              ),
+              ...inputPorts,
 
               if (node.type != NodeType.output && node.type != NodeType.chat && node.type != NodeType.wikiWriter)
                 Positioned(
                   bottom: -20, 
-                  left: 0, right: 0, 
-                  child: Center(
-                    child: MouseRegion(
-                      onEnter: (_) => setState(() => _isHoveringOutput = true),
-                      onExit: (_) => setState(() => _isHoveringOutput = false),
-                      cursor: SystemMouseCursors.click,
-                      child: GestureDetector(
-                        onPanStart: (_) => canvasState.startWireDrag(nodeId, graphState),
-                        child: Container(
-                          width: 40, height: 40, color: Colors.transparent, 
-                          alignment: Alignment.center, 
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 150),
-                            width: isSwapTarget ? 24 : 18, 
-                            height: isSwapTarget ? 24 : 18,
-                            decoration: BoxDecoration(
-                              color: isSwapTarget ? Colors.purpleAccent : (_isHoveringOutput ? kSelectGlowColor : const Color(0xFF222222)),
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: isSwapTarget ? Colors.white : (_isHoveringOutput ? Colors.white : (isSelected ? kSelectGlowColor : Colors.white)), 
-                                width: 2.0
-                              ),
-                              boxShadow: _isHoveringOutput || isSwapTarget 
-                                  ? [BoxShadow(color: isSwapTarget ? Colors.purpleAccent : kSelectGlowColor, blurRadius: 10)] 
-                                  : [],
+                  left: (width / 2) - 20, 
+                  child: MouseRegion(
+                    onEnter: (_) => setState(() => _isHoveringOutput = true),
+                    onExit: (_) => setState(() => _isHoveringOutput = false),
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onPanStart: (_) => canvasState.startWireDrag(nodeId, graphState),
+                      child: Container(
+                        width: 40, height: 40, color: Colors.transparent, 
+                        alignment: Alignment.center, 
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          width: isSwapTarget ? 24 : 18, 
+                          height: isSwapTarget ? 24 : 18,
+                          decoration: BoxDecoration(
+                            color: isSwapTarget ? Colors.purpleAccent : (_isHoveringOutput ? kSelectGlowColor : const Color(0xFF222222)),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: isSwapTarget ? Colors.white : (_isHoveringOutput ? Colors.white : (isSelected ? kSelectGlowColor : Colors.white)), 
+                              width: 2.0
                             ),
+                            boxShadow: _isHoveringOutput || isSwapTarget 
+                                ? [BoxShadow(color: isSwapTarget ? Colors.purpleAccent : kSelectGlowColor, blurRadius: 10)] 
+                                : [],
                           ),
                         ),
                       ),
@@ -504,10 +551,13 @@ class ConnectionPainter extends CustomPainter {
         paint.strokeWidth = isHovered ? 5.0 : (isActive ? 3.0 : 2.0);
         paint.color = isHovered ? Colors.cyanAccent : (isActive ? Colors.white70 : const Color(0xFF666666));
         
+        Offset startPoint = graphState.getOutputPortGlobal(node.id);
+        Offset endPoint = graphState.getInputPortGlobal(target.id, node.id);
+
         if (isActive || isHovered) {
-           _drawCurve(canvas, paint, node.outputPortGlobal, target.inputPortGlobal);
+           _drawCurve(canvas, paint, startPoint, endPoint);
         } else {
-           _drawDashedCurve(canvas, paint, node.outputPortGlobal, target.inputPortGlobal);
+           _drawDashedCurve(canvas, paint, startPoint, endPoint);
         }
       }
     }
@@ -519,10 +569,14 @@ class ConnectionPainter extends CustomPainter {
       paint.strokeWidth = 3.0;
       
       Offset end = canvasState.draggingWireHead!;
-      if (canvasState.hoveredTargetId != null) end = graphState.nodes[canvasState.hoveredTargetId!]!.inputPortGlobal;
-      else if (canvasState.hoveredSwapTargetId != null) end = graphState.nodes[canvasState.hoveredSwapTargetId!]!.outputPortGlobal;
+      if (canvasState.hoveredTargetId != null) {
+        // --- FIX: Pass hoveredMergePortIndex to the draw function so the wire snaps correctly ---
+        end = graphState.getInputPortGlobal(canvasState.hoveredTargetId!, null, forcePortIndex: canvasState.hoveredMergePortIndex);
+      } else if (canvasState.hoveredSwapTargetId != null) {
+        end = graphState.getOutputPortGlobal(canvasState.hoveredSwapTargetId!);
+      }
       
-      _drawCurve(canvas, paint, source.outputPortGlobal, end);
+      _drawCurve(canvas, paint, graphState.getOutputPortGlobal(source.id), end);
     }
   }
   

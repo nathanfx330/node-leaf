@@ -34,7 +34,8 @@ class ResearchPartyAgent {
 
     // 1. Gather Upstream Context (Same as others)
     for (var n in sequence) {
-      if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study || n.type == NodeType.summarize || n.type == NodeType.wikiWriter || n.type == NodeType.council || n.type == NodeType.researchParty) continue;
+      // --- FIX: Added merge to the ignore list ---
+      if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study || n.type == NodeType.summarize || n.type == NodeType.wikiWriter || n.type == NodeType.council || n.type == NodeType.researchParty || n.type == NodeType.merge) continue;
       
       if (n.type == NodeType.wikiReader && n.wikiTitle.isNotEmpty) {
         upstreamContext.writeln("\n>>> UNVERIFIED MAP (WIKI PAGE): '${n.wikiTitle}' <<<");
@@ -48,9 +49,7 @@ class ResearchPartyAgent {
       } else if (n.type == NodeType.search && n.content.isNotEmpty) {
         upstreamContext.writeln("\n>>> REDLEAF GLOBAL SEARCH: '${n.content}' <<<\n${await networkState.redleafService.fetchAdvancedFtsContext(n.content, n.searchLimit, n.pinnedSearchResults)}\n>>> END REDLEAF SEARCH <<<\n");
       } else if (n.type == NodeType.document && n.content.isNotEmpty) {
-        // --- START FIX ---
         upstreamContext.writeln("\n>>> REDLEAF DOCUMENT <<<\n${await networkState.redleafService.fetchDocumentText(n)}\n>>> END REDLEAF DOCUMENT <<<\n");
-        // --- END FIX ---
       }
     }
 

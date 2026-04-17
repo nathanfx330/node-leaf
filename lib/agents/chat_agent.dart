@@ -40,7 +40,8 @@ class ChatAgent {
 
     // 1. Gather Context from the upstream chain
     for (var n in sequence) {
-      if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study || n.type == NodeType.summarize || n.type == NodeType.wikiWriter || n.type == NodeType.council) continue;
+      // --- FIX: Added merge and researchParty to the ignore list ---
+      if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study || n.type == NodeType.summarize || n.type == NodeType.wikiWriter || n.type == NodeType.council || n.type == NodeType.researchParty || n.type == NodeType.merge) continue;
       
       if (n.type == NodeType.persona) {
         customPersona = n.content.trim();
@@ -70,9 +71,7 @@ class ChatAgent {
       }
 
       if (n.type == NodeType.document && n.content.isNotEmpty) {
-        // --- START FIX ---
         final docContext = await networkState.redleafService.fetchDocumentText(n);
-        // --- END FIX ---
         contextBuffer.writeln("\n>>> REDLEAF DOCUMENT <<<\n$docContext\n");
       } else if (n.type == NodeType.catalog && n.content.isNotEmpty) {
         final catId = int.tryParse(n.content);

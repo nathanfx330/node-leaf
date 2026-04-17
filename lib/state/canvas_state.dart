@@ -21,6 +21,9 @@ class CanvasState extends ChangeNotifier {
   String? _hoveredTargetId;
   String? _hoveredSwapTargetId;
   
+  // --- NEW: Track which specific merge port is being hovered ---
+  int? _hoveredMergePortIndex;
+  
   // For inserting a node into an existing wire
   String? _hoveredWireSourceId;
   int _hoveredWireIndex = -1;
@@ -40,6 +43,9 @@ class CanvasState extends ChangeNotifier {
   String? get hoveredWireSourceId => _hoveredWireSourceId;
   int get hoveredWireIndex => _hoveredWireIndex;
   bool get isInvalidCycle => _isInvalidCycle;
+  
+  // --- NEW: Expose the hovered port index for visual feedback ---
+  int? get hoveredMergePortIndex => _hoveredMergePortIndex;
 
   // --- VIEWPORT MANAGEMENT ---
 
@@ -50,8 +56,6 @@ class CanvasState extends ChangeNotifier {
 
   void panCanvas(Offset delta) { 
     canvasController.value = canvasController.value.clone()..translate(delta.dx, delta.dy); 
-    // We don't necessarily need to notifyListeners here because InteractiveViewer handles its own redraws,
-    // but if you have custom overlays attached to the canvas controller, you might need it.
   }
 
   Offset screenToCanvas(Offset screenPos) { 
@@ -111,7 +115,7 @@ class CanvasState extends ChangeNotifier {
   void startWireDrag(String sourceId, GraphState graphState) { 
     graphState.recordUndo(); 
     _draggingWireSourceId = sourceId; 
-    _draggingWireHead = graphState.nodes[sourceId]!.outputPortGlobal; 
+    _draggingWireHead = graphState.getOutputPortGlobal(sourceId); // Use dynamic port
     notifyListeners(); 
   }
 
@@ -119,23 +123,59 @@ class CanvasState extends ChangeNotifier {
     _draggingWireHead = screenToCanvas(screenPos);
     _hoveredTargetId = null; 
     _hoveredSwapTargetId = null; 
+    _hoveredMergePortIndex = null; // Reset port hover state
     _isInvalidCycle = false;
 
     for (var node in graphState.nodes.values) {
       if (node.id == _draggingWireSourceId) continue;
       
-      // Check input port proximity (Connecting)
-      if ((_draggingWireHead! - node.inputPortGlobal).distance < 60) {
-        _hoveredTargetId = node.id;
-        if (_detectCycle(_draggingWireSourceId!, node.id, graphState.nodes)) {
-          _isInvalidCycle = true; 
-        }
-        break;
+      // --- Specific Port Hit Detection ---
+      if (node.type == NodeType.merge) {
+          bool foundHit = false;
+          // Check distance against each of the 3 ports individually
+          for (int i = 0; i < 3; i++) {
+              double spacing = graphState.getNodeWidth(node.id) / 3;
+              double offsetX = (spacing / 2) + (i * spacing);
+              Offset exactPortLocation = node.position + Offset(offsetX, 0);
+
+              if ((_draggingWireHead! - exactPortLocation).distance < 60) {
+                  _hoveredTargetId = node.id;
+                  _hoveredMergePortIndex = i;
+                  foundHit = true;
+                  break;
+              }
+          }
+          
+          if (foundHit) {
+              // Check for both recursive cycles and cross-column contamination
+              if (_detectCycle(_draggingWireSourceId!, node.id, graphState.nodes) || 
+                  _causesCrossContamination(_draggingWireSourceId!, node.id, _hoveredMergePortIndex, graphState)) {
+                  _isInvalidCycle = true; 
+              }
+              break; 
+          }
+      } else {
+          // Standard Single Port Hit Detection
+          Offset targetPort = graphState.getInputPortGlobal(node.id, _draggingWireSourceId); 
+          if ((_draggingWireHead! - targetPort).distance < 60) {
+            _hoveredTargetId = node.id;
+            
+            // Check for both recursive cycles and cross-column contamination
+            if (_detectCycle(_draggingWireSourceId!, node.id, graphState.nodes) || 
+                _causesCrossContamination(_draggingWireSourceId!, node.id, null, graphState)) {
+              _isInvalidCycle = true; 
+            }
+            break;
+          }
       }
       
       // Check output port proximity (Swapping/Stealing connections)
-      if (node.type != NodeType.output && (_draggingWireHead! - node.outputPortGlobal).distance < 60) { 
+      Offset outPort = graphState.getOutputPortGlobal(node.id); 
+      if (node.type != NodeType.output && (_draggingWireHead! - outPort).distance < 60) { 
         _hoveredSwapTargetId = node.id; 
+        if (_causesCrossContamination(_draggingWireSourceId!, node.id, null, graphState)) {
+            _isInvalidCycle = true;
+        }
         break; 
       }
     }
@@ -145,7 +185,7 @@ class CanvasState extends ChangeNotifier {
   void endWireDrag(GraphState graphState) {
     if (_draggingWireSourceId != null && !_isInvalidCycle) {
       if (_hoveredTargetId != null) { 
-        graphState.connectNode(_draggingWireSourceId!, _hoveredTargetId!); 
+        graphState.connectNode(_draggingWireSourceId!, _hoveredTargetId!, portIndex: _hoveredMergePortIndex); 
       } else if (_hoveredSwapTargetId != null) {
         graphState.swapNodeConnections(_draggingWireSourceId!, _hoveredSwapTargetId!);
       }
@@ -156,9 +196,80 @@ class CanvasState extends ChangeNotifier {
     _draggingWireHead = null; 
     _hoveredTargetId = null; 
     _hoveredSwapTargetId = null; 
+    _hoveredMergePortIndex = null;
     _isInvalidCycle = false; 
     
     notifyListeners();
+  }
+
+  // --- ANTI CROSS-COLUMN CONTAMINATION LOGIC ---
+  bool _causesCrossContamination(String sourceId, String targetId, int? targetPortIndex, GraphState graphState) {
+    Map<String, Set<String>> destinations = {};
+    for (var node in graphState.nodes.values) {
+      destinations[node.id] = {};
+    }
+
+    // Build parent mapping to walk upstream
+    Map<String, List<String>> incoming = {};
+    for (var n in graphState.nodes.values) {
+      for (var child in n.nextNodeIds) {
+        incoming.putIfAbsent(child, () => []).add(n.id);
+      }
+    }
+
+    // Walk upstream from every Merge port and tag all ancestors
+    for (var mergeNode in graphState.nodes.values.where((n) => n.type == NodeType.merge)) {
+      var ports = graphState.getMergePorts(mergeNode.id);
+      for (int p = 0; p < ports.length; p++) {
+        String rootId = ports[p];
+        if (rootId.isEmpty || !graphState.nodes.containsKey(rootId)) continue;
+        
+        Set<String> visited = {};
+        List<String> queue = [rootId];
+        
+        while (queue.isNotEmpty) {
+          String curr = queue.removeLast();
+          if (visited.add(curr)) {
+            // Tag this node with the specific Merge Node ID and Port Number it flows into
+            destinations[curr]!.add("${mergeNode.id}_$p");
+            if (incoming.containsKey(curr)) {
+              queue.addAll(incoming[curr]!);
+            }
+          }
+        }
+      }
+    }
+    
+    // Get what ports the source already reaches
+    Set<String> sourceDests = Set.from(destinations[sourceId] ?? {});
+    Set<String> targetDests = {};
+    
+    // Add the theoretical new connection
+    if (graphState.nodes[targetId]?.type == NodeType.merge) {
+      if (targetPortIndex != null) {
+        targetDests.add("${targetId}_$targetPortIndex");
+      }
+    } else {
+      targetDests = Set.from(destinations[targetId] ?? {});
+    }
+
+    // A conflict exists if connecting these nodes causes the source to flow into 
+    // multiple DIFFERENT ports on the SAME Merge Node.
+    Set<String> combined = {}..addAll(sourceDests)..addAll(targetDests);
+    Map<String, Set<String>> mergeToPorts = {};
+    
+    for (var dest in combined) {
+      var parts = dest.split('_');
+      String mId = parts[0];
+      String pIdx = parts[1];
+      
+      mergeToPorts.putIfAbsent(mId, () => {}).add(pIdx);
+      if (mergeToPorts[mId]!.length > 1) {
+        return true; // CONTAMINATION DETECTED!
+      }
+    }
+    
+    return false;
   }
 
   // --- WIRE HOVERING (For Inserting Nodes) ---
@@ -171,7 +282,7 @@ class CanvasState extends ChangeNotifier {
     _hoveredWireIndex = -1;
 
     if (isShift && graphState.nodes.containsKey(draggingNodeId)) {
-      final nodeCenter = graphState.nodes[draggingNodeId]!.rect.center;
+      final nodeCenter = graphState.nodes[draggingNodeId]!.position + Offset(graphState.getNodeWidth(draggingNodeId) / 2, graphState.nodes[draggingNodeId]!.currentHeight / 2);
       
       for (var source in graphState.nodes.values) {
         if (source.id == draggingNodeId) continue;
@@ -180,8 +291,7 @@ class CanvasState extends ChangeNotifier {
           final targetId = source.nextNodeIds[i];
           if (targetId == draggingNodeId || !graphState.nodes.containsKey(targetId)) continue;
           
-          final target = graphState.nodes[targetId]!;
-          if (_distanceToLineSegment(nodeCenter, source.outputPortGlobal, target.inputPortGlobal) < 50) { 
+          if (_distanceToLineSegment(nodeCenter, graphState.getOutputPortGlobal(source.id), graphState.getInputPortGlobal(targetId, source.id)) < 50) { 
             _hoveredWireSourceId = source.id; 
             _hoveredWireIndex = i; 
             return; 
