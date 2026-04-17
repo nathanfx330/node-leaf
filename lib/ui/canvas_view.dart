@@ -373,21 +373,25 @@ class _NodeVisualState extends State<NodeVisual> {
     // Calculate dynamic input ports (FIXED 3 PORTS FOR MERGE NODE)
     List<Widget> inputPorts = [];
     if (node.type == NodeType.merge) {
-      final incoming = graphState.getIncomingNodes(nodeId);
+      
+      // --- FIX: Grab the actual port memory array from the backend ---
+      final List<String> ports = graphState.getMergePorts(node.id);
+      
       int portCount = 3; // Hardcoded to 3
       double spacing = width / portCount;
 
-      int snapPortIndex = incoming.length;
-      if (canvasState.draggingWireSourceId != null && incoming.contains(canvasState.draggingWireSourceId)) {
-        snapPortIndex = incoming.indexOf(canvasState.draggingWireSourceId!);
+      int snapPortIndex = -1;
+      if (canvasState.draggingWireSourceId != null) {
+          // If we are dragging a wire that already belongs to a port, find it
+          snapPortIndex = ports.indexOf(canvasState.draggingWireSourceId!);
       }
-      if (snapPortIndex > 2) snapPortIndex = 2; // Cap at 3rd port visually
 
       for (int i = 0; i < portCount; i++) {
-        bool isHoveringThisPort = isHoverTarget && !isCycleHover && (i == snapPortIndex);
-        // It is considered "connected" if there's a wire for this index, 
-        // OR if we are on the 3rd port and there are 3 or MORE wires total.
-        bool isConnected = i < incoming.length || (i == 2 && incoming.length >= 3);
+        // It's hovered if the mouse is physically over it (or if it's the port the wire originally came from)
+        bool isHoveringThisPort = isHoverTarget && !isCycleHover && (i == canvasState.hoveredMergePortIndex || i == snapPortIndex);
+        
+        // --- FIX: It is connected ONLY if there is actually a valid node ID stored in this specific port index ---
+        bool isConnected = ports[i].isNotEmpty;
         
         inputPorts.add(
           Positioned(
