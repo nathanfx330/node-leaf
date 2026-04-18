@@ -34,11 +34,13 @@ class _NodeCanvasState extends State<NodeCanvas> {
         
         if (isMiddleClick) return;
 
-        final canvasPos = canvasState.screenToCanvas(event.position);
+        // FIX: Use localPosition so we aren't offset by the TopBar/Window frame
+        final canvasPos = canvasState.screenToCanvas(event.localPosition);
         bool hitNode = graphState.nodes.values.any((n) => n.rect.inflate(40).contains(canvasPos));
         
         if (!hitNode) {
           if (isRightClick) {
+            // showMenu needs global screen coordinates, so keep event.position here
             final pos = RelativeRect.fromLTRB(
               event.position.dx, event.position.dy, 
               event.position.dx, event.position.dy
@@ -72,17 +74,20 @@ class _NodeCanvasState extends State<NodeCanvas> {
             });
           } else {
             _isLassoing = true;
-            canvasState.startLasso(event.position, graphState);
+            // FIX: Pass localPosition to the lasso
+            canvasState.startLasso(event.localPosition, graphState);
           }
         }
       },
       onPointerMove: (event) {
         if (event.buttons == kMiddleMouseButton) {
-          canvasState.panCanvas(event.delta);
+          canvasState.panCanvas(event.delta); // delta is already relative, so it's fine
         } else if (canvasState.draggingWireSourceId != null) {
-          canvasState.updateWireDrag(event.position, graphState);
+          // FIX: Pass localPosition so wire dragging hits ports accurately
+          canvasState.updateWireDrag(event.localPosition, graphState);
         } else if (_isLassoing && canvasState.lassoRect != null) {
-          canvasState.updateLasso(event.position, graphState);
+          // FIX: Pass localPosition to keep the lasso box exactly under the mouse
+          canvasState.updateLasso(event.localPosition, graphState);
         }
       },
       onPointerUp: (event) {
