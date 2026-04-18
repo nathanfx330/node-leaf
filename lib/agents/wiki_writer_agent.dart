@@ -23,7 +23,6 @@ class WikiWriterAgent {
 
     // 1. Gather Context
     for (var n in sequence) {
-       // --- FIX: Added merge and researchParty to the ignore list ---
        if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study || n.type == NodeType.summarize || n.type == NodeType.wikiWriter || n.type == NodeType.council || n.type == NodeType.researchParty || n.type == NodeType.merge) continue;
        
        if (n.type == NodeType.persona) {
@@ -74,16 +73,41 @@ class WikiWriterAgent {
        }
     }
 
+    // Add context for pills attached directly to the WikiWriter node
+    if (node.redleafPills.isNotEmpty) {
+      upstreamContext.writeln("\n>>> FACTUAL CONTEXT FROM ATTACHED ENTITIES <<<");
+      for (var pill in node.redleafPills) {
+        upstreamContext.writeln(await networkState.redleafService.fetchContextForPill(pill));
+      }
+      upstreamContext.writeln(">>> END ATTACHED ENTITIES <<<\n");
+    }
+
     node.ollamaResult = "🤖 Editing Wiki Page...\n\n"; onUpdate();
     
-    String userInstructions = node.ollamaPrompt.isNotEmpty 
-        ? node.ollamaPrompt 
-        : "Review the CURRENT WIKI PAGE STATE and the NEW RESEARCH. Update the wiki page.";
+    // --- FIX: Combine BOTH the Editor Instructions and the Chat Log ---
+    String userInstructions = "";
+    
+    if (node.ollamaPrompt.isNotEmpty) {
+      userInstructions += "PRIMARY DIRECTIVE:\n${node.ollamaPrompt}\n\n";
+    }
+    
+    if (node.chatHistory.isNotEmpty) {
+      userInstructions += "EDITOR CHAT FEEDBACK (Incorporate these specific adjustments requested by the user):\n";
+      for (var msg in node.chatHistory) {
+        userInstructions += "${(msg['role'] ?? 'unknown').toUpperCase()}: ${msg['content']}\n";
+      }
+      userInstructions += "\n";
+    }
+
+    if (userInstructions.isEmpty) {
+      userInstructions = "Review the CURRENT WIKI PAGE STATE and the NEW RESEARCH. Update the wiki page.";
+    }
 
     String fullPayload = "$userInstructions\n\nCONTEXT TO PROCESS:\n${upstreamContext.isEmpty ? "None" : upstreamContext.toString()}";
 
     final currentDate = DateTime.now().toString().split('.')[0];
     
+    // --- FIX: Added aggressive prompt instruction to NOT use conversational filler ---
     String systemInstruction = '''You are an expert Wikipedia Editor and Fact Checker.
 Your task is to rewrite, expand, and format the target wiki page to seamlessly incorporate new facts from the provided context.
 
@@ -92,7 +116,7 @@ CRITICAL RULES:
 2. KNOWLEDGE GRAPH LINKS: Whenever you mention a core concept, person, or event that likely has its own page, wrap it in double brackets like [[Concept Name]] to build the Wiki Graph.
 3. AGREE OR CONTRAST: If the new research agrees with the current wiki, seamlessly expand the article. If it CONTRADICTS, you MUST preserve the controversy. Do not erase the old claim; instead, write: 'While previous documents suggested X, newly analyzed [Doc Y] indicates Z.'
 4. REVISION HISTORY: Append a bullet point to the '### Revision History' section at the bottom of the file detailing exactly what you changed today and why. (Create this section if it doesn't exist).
-5. Output ONLY valid Markdown. Do NOT wrap your response in markdown code blocks (e.g., no ```markdown). Output the raw text directly.''';
+5. NO CONVERSATIONAL FILLER: Do NOT output introductory or concluding remarks (e.g., 'Here is the rewritten page'). Output ONLY the raw Markdown content for the file. Do NOT wrap your response in markdown code blocks (e.g., no ```markdown). Output the raw text directly.''';
 
     if (customPersona.isNotEmpty) {
       systemInstruction = "YOUR ACTIVE PERSONA: $customPersona\n\n$systemInstruction\nYou MUST adopt this persona completely in your writing style, tone, and perspective while adhering to the editing rules.";

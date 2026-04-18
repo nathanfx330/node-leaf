@@ -27,20 +27,26 @@ class ChatAgent {
     required Function() onUpdate,
   }) async {
     graphState.appendChatMessage(node.id, "user", userMessage);
-    graphState.appendChatMessage(node.id, "assistant", "🤖 Gathering Redleaf Context...");
+    graphState.appendChatMessage(node.id, "assistant", "🤖 Gathering Context...");
 
     StringBuffer contextBuffer = StringBuffer();
+    
+    // --- FIX: Intercept System Instructions for Wiki Writer Mode ---
     String systemInstructions = node.ollamaPrompt.isNotEmpty ? node.ollamaPrompt : "You are a helpful research assistant.";
 
-    if (node.ollamaNoBacktalk) {
+    if (node.type == NodeType.wikiWriter) {
+      systemInstructions = "You are an Editorial Planner helping the user prepare to rewrite a Wiki page. Discuss the plan, answer questions using the provided context, and confirm the changes. DO NOT output the rewritten markdown document yourself. Keep your responses conversational and concise. Remind the user to click the 'EXECUTE REWRITE' button when the plan is agreed upon.";
+    } else if (node.ollamaNoBacktalk) {
+      // We only apply the strict no-backtalk rule if it's a standard chat node, 
+      // because in the Wiki Writer, we explicitly want a conversational planner.
       systemInstructions += "\n\nYou are a strict, analytical research agent. You MUST base your answers entirely on the provided REDLEAF CONTEXT. You MUST include inline citations exactly like [Doc 12] when stating facts derived from the context. Do not use conversational filler or backtalk.";
     }
-    
+    // --- END FIX ---
+
     String customPersona = "";
 
     // 1. Gather Context from the upstream chain
     for (var n in sequence) {
-      // --- FIX: Added merge and researchParty to the ignore list ---
       if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study || n.type == NodeType.summarize || n.type == NodeType.wikiWriter || n.type == NodeType.council || n.type == NodeType.researchParty || n.type == NodeType.merge) continue;
       
       if (n.type == NodeType.persona) {
@@ -105,6 +111,22 @@ class ChatAgent {
         contextBuffer.writeln(">>> END DEEP STUDY <<<\n");
       }
     }
+
+    // --- Inject Current Node Data if it's a WikiWriter ---
+    if (node.type == NodeType.wikiWriter) {
+      if (node.wikiTitle.isNotEmpty) {
+        final wikiContext = await graphState.readWikiPage(node.wikiTitle, networkState);
+        contextBuffer.writeln("\n>>> TARGET WIKI PAGE FOR REWRITE: '${node.wikiTitle}' <<<\n$wikiContext\n>>> END TARGET WIKI PAGE <<<\n");
+      }
+      if (node.redleafPills.isNotEmpty) {
+        contextBuffer.writeln("\n>>> FACTUAL CONTEXT FROM ATTACHED ENTITIES <<<");
+        for (var pill in node.redleafPills) {
+          contextBuffer.writeln(await networkState.redleafService.fetchContextForPill(pill));
+        }
+        contextBuffer.writeln(">>> END ATTACHED ENTITIES <<<\n");
+      }
+    }
+    // --- END NEW ---
 
     // 2. Autonomous Research (ReAct Loop tailored for Chat)
     if (node.enableAutonomousResearch && networkState.redleafService.isLoggedIn) {
