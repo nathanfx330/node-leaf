@@ -532,11 +532,15 @@ class _NodeVisualState extends State<NodeVisual> {
   void _showContextMenu(BuildContext context, Offset globalPos, String nodeId) {
     final graphState = context.read<GraphState>();
     final pos = RelativeRect.fromLTRB(globalPos.dx, globalPos.dy, globalPos.dx, globalPos.dy);
+    
+    // --- THIS IS THE FIX ---
+    // We removed the 'if (graphState.nodes[nodeId]?.type == NodeType.scene)' check
+    // so 'Pop Out of Chain' is always available.
+    
     showMenu(context: context, position: pos, items:[
       PopupMenuItem(child: const Text("Delete"), onTap: () { graphState.selectNode(nodeId); graphState.deleteSelected(); }),
       PopupMenuItem(child: const Text("Disconnect Outputs"), onTap: () => graphState.disconnectNode(nodeId)),
-      if (graphState.nodes[nodeId]?.type == NodeType.scene)
-        PopupMenuItem(child: const Text("Pop Out of Chain"), onTap: () => graphState.popNodeOut(nodeId)),
+      PopupMenuItem(child: const Text("Pop Out of Chain"), onTap: () => graphState.popNodeOut(nodeId)),
     ]);
   }
 }
