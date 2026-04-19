@@ -10,6 +10,7 @@ import '../state/canvas_state.dart';
 import '../state/graph_state.dart';
 import '../state/network_state.dart';
 import '../models/node_models.dart';
+import 'dialogs/node_search_dialog.dart'; // <--- NEW IMPORT
 
 class NodeCanvas extends StatefulWidget {
   const NodeCanvas({super.key});
@@ -20,96 +21,150 @@ class NodeCanvas extends StatefulWidget {
 class _NodeCanvasState extends State<NodeCanvas> {
   bool _isLassoing = false;
 
+  // --- NEW: Track mouse and focus for the Tab Menu ---
+  final FocusNode _canvasFocusNode = FocusNode();
+  Offset _lastMouseScreenPos = Offset.zero;
+
+  @override
+  void dispose() {
+    _canvasFocusNode.dispose();
+    super.dispose();
+  }
+
+  void _showNodeSearchDialog() async {
+    final canvasState = context.read<CanvasState>();
+    final graphState = context.read<GraphState>();
+
+    // Calculate canvas coordinates based on the mouse's last known location
+    final canvasPos = canvasState.screenToCanvas(_lastMouseScreenPos);
+
+    final NodeType? selectedType = await showDialog<NodeType>(
+      context: context,
+      barrierColor: Colors.transparent, // Invisible barrier
+      builder: (context) => const NodeSearchDialog(),
+    );
+
+    if (selectedType != null) {
+      graphState.addNode(canvasPos, selectedType);
+    }
+    
+    // Return focus to the canvas so shortcuts keep working
+    _canvasFocusNode.requestFocus();
+  }
+
   @override
   Widget build(BuildContext context) {
     final canvasState = context.read<CanvasState>();
     final graphState = context.read<GraphState>();
     
-    return Listener(
-      key: canvasState.canvasKey, 
-      behavior: HitTestBehavior.opaque,
-      onPointerDown: (event) {
-        final isRightClick = event.buttons == kSecondaryMouseButton;
-        final isMiddleClick = event.buttons == kMiddleMouseButton;
-        
-        if (isMiddleClick) return;
-
-        // FIX: Use localPosition so we aren't offset by the TopBar/Window frame
-        final canvasPos = canvasState.screenToCanvas(event.localPosition);
-        bool hitNode = graphState.nodes.values.any((n) => n.rect.inflate(40).contains(canvasPos));
-        
-        if (!hitNode) {
-          if (isRightClick) {
-            // showMenu needs global screen coordinates, so keep event.position here
-            final pos = RelativeRect.fromLTRB(
-              event.position.dx, event.position.dy, 
-              event.position.dx, event.position.dy
-            );
-            showMenu<NodeType>(
-              context: context,
-              position: pos,
-              color: kNodeBg,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              items: const [
-                PopupMenuItem(value: NodeType.scene, child: Text("➕ Add Scratchpad")),
-                PopupMenuItem(value: NodeType.search, child: Text("🔍 Add Global Search")),
-                PopupMenuItem(value: NodeType.document, child: Text("📄 Add Document Reader")),
-                PopupMenuItem(value: NodeType.relationship, child: Text("🔗 Add Graph Relationship")),
-                PopupMenuItem(value: NodeType.catalog, child: Text("🗂️ Add Catalog Reader")),
-                PopupMenuItem(value: NodeType.intersection, child: Text("🎯 Add Co-Mention")),
-                PopupMenuItem(value: NodeType.briefing, child: Text("🗺️ Add System Briefing")),
-                PopupMenuItem(value: NodeType.persona, child: Text("🎭 Add Agent Persona")),
-                PopupMenuItem(value: NodeType.wikiReader, child: Text("📘 Add Wiki Reader")),
-                PopupMenuItem(value: NodeType.study, child: Text("🤓 Add Deep Study (Geek Out)")),
-                PopupMenuItem(value: NodeType.summarize, child: Text("📝 Add Summarizer (Simple)")),
-                PopupMenuItem(value: NodeType.output, child: Text("✨ Add Ollama Output")),
-                PopupMenuItem(value: NodeType.chat, child: Text("💬 Add Ollama Chat Node")),
-                PopupMenuItem(value: NodeType.wikiWriter, child: Text("🖋️ Add Wiki Writer")),
-                PopupMenuItem(value: NodeType.council, child: Text("🏛️ Add Wiki Council")), 
-                PopupMenuItem(value: NodeType.researchParty, child: Text("🏕️ Add Research Party")), 
-                PopupMenuItem(value: NodeType.merge, child: Text("🔀 Add Merge Context")), 
-              ],
-            ).then((type) {
-              if (type != null) graphState.addNode(canvasPos, type);
-            });
-          } else {
-            _isLassoing = true;
-            // FIX: Pass localPosition to the lasso
-            canvasState.startLasso(event.localPosition, graphState);
+    // --- WRAP IN FOCUS WIDGET ---
+    return Focus(
+      focusNode: _canvasFocusNode,
+      autofocus: true,
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.tab) {
+          _showNodeSearchDialog();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Listener(
+        key: canvasState.canvasKey, 
+        behavior: HitTestBehavior.opaque,
+        // --- NEW: Track mouse position on hover ---
+        onPointerHover: (event) {
+          _lastMouseScreenPos = event.localPosition;
+        },
+        onPointerDown: (event) {
+          _lastMouseScreenPos = event.localPosition;
+          
+          // Ensure canvas grabs focus when clicked
+          if (!_canvasFocusNode.hasFocus) {
+            _canvasFocusNode.requestFocus();
           }
-        }
-      },
-      onPointerMove: (event) {
-        if (event.buttons == kMiddleMouseButton) {
-          canvasState.panCanvas(event.delta); // delta is already relative, so it's fine
-        } else if (canvasState.draggingWireSourceId != null) {
-          // FIX: Pass localPosition so wire dragging hits ports accurately
-          canvasState.updateWireDrag(event.localPosition, graphState);
-        } else if (_isLassoing && canvasState.lassoRect != null) {
-          // FIX: Pass localPosition to keep the lasso box exactly under the mouse
-          canvasState.updateLasso(event.localPosition, graphState);
-        }
-      },
-      onPointerUp: (event) {
-        if (canvasState.draggingWireSourceId != null) canvasState.endWireDrag(graphState);
-        if (_isLassoing) { canvasState.endLasso(); _isLassoing = false; }
-      },
-      child: InteractiveViewer(
-        transformationController: canvasState.canvasController, 
-        boundaryMargin: const EdgeInsets.all(kWorldSize), 
-        minScale: 0.1, maxScale: 2.0, 
-        constrained: false, panEnabled: false,
-        child: Container(
-          width: kWorldSize, height: kWorldSize, color: Colors.transparent, 
-          child: Stack(
-            children:[
-              const RepaintBoundary(child: ConnectionsLayer()),
-              Selector<GraphState, List<String>>(
-                selector: (_, s) => s.nodes.keys.toList(),
-                builder: (ctx, ids, _) => Stack(children: ids.map((id) => NodePositionWrapper(nodeId: id)).toList()),
-              ),
-              const LassoLayer(),
-            ],
+
+          final isRightClick = event.buttons == kSecondaryMouseButton;
+          final isMiddleClick = event.buttons == kMiddleMouseButton;
+          
+          if (isMiddleClick) return;
+
+          // FIX: Use localPosition so we aren't offset by the TopBar/Window frame
+          final canvasPos = canvasState.screenToCanvas(event.localPosition);
+          bool hitNode = graphState.nodes.values.any((n) => n.rect.inflate(40).contains(canvasPos));
+          
+          if (!hitNode) {
+            if (isRightClick) {
+              // showMenu needs global screen coordinates, so keep event.position here
+              final pos = RelativeRect.fromLTRB(
+                event.position.dx, event.position.dy, 
+                event.position.dx, event.position.dy
+              );
+              showMenu<NodeType>(
+                context: context,
+                position: pos,
+                color: kNodeBg,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                items: const [
+                  PopupMenuItem(value: NodeType.scene, child: Text("➕ Add Scratchpad")),
+                  PopupMenuItem(value: NodeType.search, child: Text("🔍 Add Global Search")),
+                  PopupMenuItem(value: NodeType.document, child: Text("📄 Add Document Reader")),
+                  PopupMenuItem(value: NodeType.relationship, child: Text("🔗 Add Graph Relationship")),
+                  PopupMenuItem(value: NodeType.catalog, child: Text("🗂️ Add Catalog Reader")),
+                  PopupMenuItem(value: NodeType.intersection, child: Text("🎯 Add Co-Mention")),
+                  PopupMenuItem(value: NodeType.briefing, child: Text("🗺️ Add System Briefing")),
+                  PopupMenuItem(value: NodeType.persona, child: Text("🎭 Add Agent Persona")),
+                  PopupMenuItem(value: NodeType.wikiReader, child: Text("📘 Add Wiki Reader")),
+                  PopupMenuItem(value: NodeType.study, child: Text("🤓 Add Deep Study (Geek Out)")),
+                  PopupMenuItem(value: NodeType.summarize, child: Text("📝 Add Summarizer (Simple)")),
+                  PopupMenuItem(value: NodeType.output, child: Text("✨ Add Ollama Output")),
+                  PopupMenuItem(value: NodeType.chat, child: Text("💬 Add Ollama Chat Node")),
+                  PopupMenuItem(value: NodeType.wikiWriter, child: Text("🖋️ Add Wiki Writer")),
+                  PopupMenuItem(value: NodeType.council, child: Text("🏛️ Add Wiki Council")), 
+                  PopupMenuItem(value: NodeType.researchParty, child: Text("🏕️ Add Research Party")), 
+                  PopupMenuItem(value: NodeType.merge, child: Text("🔀 Add Merge Context")), 
+                ],
+              ).then((type) {
+                if (type != null) graphState.addNode(canvasPos, type);
+              });
+            } else {
+              _isLassoing = true;
+              // FIX: Pass localPosition to the lasso
+              canvasState.startLasso(event.localPosition, graphState);
+            }
+          }
+        },
+        onPointerMove: (event) {
+          if (event.buttons == kMiddleMouseButton) {
+            canvasState.panCanvas(event.delta); // delta is already relative, so it's fine
+          } else if (canvasState.draggingWireSourceId != null) {
+            // FIX: Pass localPosition so wire dragging hits ports accurately
+            canvasState.updateWireDrag(event.localPosition, graphState);
+          } else if (_isLassoing && canvasState.lassoRect != null) {
+            // FIX: Pass localPosition to keep the lasso box exactly under the mouse
+            canvasState.updateLasso(event.localPosition, graphState);
+          }
+        },
+        onPointerUp: (event) {
+          if (canvasState.draggingWireSourceId != null) canvasState.endWireDrag(graphState);
+          if (_isLassoing) { canvasState.endLasso(); _isLassoing = false; }
+        },
+        child: InteractiveViewer(
+          transformationController: canvasState.canvasController, 
+          boundaryMargin: const EdgeInsets.all(kWorldSize), 
+          minScale: 0.1, maxScale: 2.0, 
+          constrained: false, panEnabled: false,
+          child: Container(
+            width: kWorldSize, height: kWorldSize, color: Colors.transparent, 
+            child: Stack(
+              children:[
+                const RepaintBoundary(child: ConnectionsLayer()),
+                Selector<GraphState, List<String>>(
+                  selector: (_, s) => s.nodes.keys.toList(),
+                  builder: (ctx, ids, _) => Stack(children: ids.map((id) => NodePositionWrapper(nodeId: id)).toList()),
+                ),
+                const LassoLayer(),
+              ],
+            ),
           ),
         ),
       ),
@@ -532,10 +587,6 @@ class _NodeVisualState extends State<NodeVisual> {
   void _showContextMenu(BuildContext context, Offset globalPos, String nodeId) {
     final graphState = context.read<GraphState>();
     final pos = RelativeRect.fromLTRB(globalPos.dx, globalPos.dy, globalPos.dx, globalPos.dy);
-    
-    // --- THIS IS THE FIX ---
-    // We removed the 'if (graphState.nodes[nodeId]?.type == NodeType.scene)' check
-    // so 'Pop Out of Chain' is always available.
     
     showMenu(context: context, position: pos, items:[
       PopupMenuItem(child: const Text("Delete"), onTap: () { graphState.selectNode(nodeId); graphState.deleteSelected(); }),
