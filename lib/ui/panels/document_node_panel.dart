@@ -2,8 +2,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../constants.dart';
 import '../../state/graph_state.dart';
 import '../../state/network_state.dart';
+import '../side_panel.dart'; // Needed for EntitySearchDialog
 
 class DocumentNodePanel extends StatefulWidget {
   final String nodeId;
@@ -15,6 +17,7 @@ class DocumentNodePanel extends StatefulWidget {
 
 class _DocumentNodePanelState extends State<DocumentNodePanel> {
   late TextEditingController _ctrl;
+  late TextEditingController _briefCtrl;
   List<dynamic> _comments = [];
   bool _isLoading = false;
   bool _hasFetched = false;
@@ -23,7 +26,9 @@ class _DocumentNodePanelState extends State<DocumentNodePanel> {
   void initState() {
     super.initState();
     final graphState = context.read<GraphState>();
-    _ctrl = TextEditingController(text: graphState.nodes[widget.nodeId]?.content ?? "");
+    final node = graphState.nodes[widget.nodeId];
+    _ctrl = TextEditingController(text: node?.content ?? "");
+    _briefCtrl = TextEditingController(text: node?.ollamaPrompt ?? "");
     if (_ctrl.text.isNotEmpty) _fetchComments();
   }
 
@@ -32,7 +37,9 @@ class _DocumentNodePanelState extends State<DocumentNodePanel> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.nodeId != widget.nodeId) {
       final graphState = context.read<GraphState>();
-      _ctrl.text = graphState.nodes[widget.nodeId]?.content ?? "";
+      final node = graphState.nodes[widget.nodeId];
+      _ctrl.text = node?.content ?? "";
+      _briefCtrl.text = node?.ollamaPrompt ?? "";
       _comments.clear();
       _hasFetched = false;
       if (_ctrl.text.isNotEmpty) _fetchComments();
@@ -42,6 +49,7 @@ class _DocumentNodePanelState extends State<DocumentNodePanel> {
   @override
   void dispose() {
     _ctrl.dispose();
+    _briefCtrl.dispose();
     super.dispose();
   }
 
@@ -72,6 +80,7 @@ class _DocumentNodePanelState extends State<DocumentNodePanel> {
   @override
   Widget build(BuildContext context) {
     final graphState = context.watch<GraphState>();
+    final networkState = context.watch<NetworkState>();
     final node = graphState.nodes[widget.nodeId];
     if (node == null) return const SizedBox.shrink();
 
@@ -98,6 +107,46 @@ class _DocumentNodePanelState extends State<DocumentNodePanel> {
             ),
             onChanged: (v) => graphState.updateNodeContent(widget.nodeId, v),
             onSubmitted: (_) => _fetchComments(),
+          ),
+          
+          const SizedBox(height: 20),
+          const Text("Document Brief (Context for AI):", style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 5),
+          TextField(
+            controller: _briefCtrl,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              filled: true,
+              fillColor: Color(0xFF222222),
+              hintText: "e.g., Read this testimony paying special attention to financial contradictions.",
+              border: OutlineInputBorder(borderSide: BorderSide.none)
+            ),
+            onChanged: (v) => graphState.updateOllamaPrompt(widget.nodeId, v),
+          ),
+
+          const SizedBox(height: 20),
+          const Text("Entities to Track:", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white70)),
+          const SizedBox(height: 5),
+          Wrap(
+            spacing: 8, runSpacing: 8,
+            children: [
+              ...node.redleafPills.map((p) => Chip(
+                backgroundColor: kAccentColor.withOpacity(0.2), side: const BorderSide(color: kAccentColor),
+                label: Text(p.text, style: const TextStyle(color: Colors.white, fontSize: 12)),
+                onDeleted: () => graphState.removePill(node.id, p.id),
+              )),
+              ActionChip(
+                backgroundColor: Colors.transparent, side: const BorderSide(color: Colors.white54, style: BorderStyle.solid),
+                label: const Text("+ Add Entity"),
+                onPressed: () {
+                  if (!networkState.redleafService.isLoggedIn) { 
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please configure your Redleaf credentials in Settings first."))); 
+                  } else { 
+                    showDialog(context: context, builder: (ctx) => EntitySearchDialog(nodeId: node.id)); 
+                  }
+                },
+              ),
+            ],
           ),
           
           const SizedBox(height: 20),

@@ -249,7 +249,6 @@ class RedleafService {
     return output;
   }
 
-  // --- MODIFIED: fetchDocumentText now accepts a StoryNode ---
   Future<String> fetchDocumentText(StoryNode node) async {
     if (!await _ensureAuth()) return "[Auth Error: Not connected to Redleaf]";
     try {
@@ -290,9 +289,25 @@ class RedleafService {
           String text = data['text'] ?? '';
           if (text.length > 4000) text = "${text.substring(0, 4000)}\n\n... [Document Truncated for AI Context] ...";
           
-          // --- NEW: INJECT CURATION DATA ---
           StringBuffer finalOutput = StringBuffer();
           finalOutput.writeln("[Redleaf Raw Text for Document #$docId${startPage != null ? ' (Pages $startPage-$endPage)' : ''}]:\n$text");
+
+          // --- FIX: ADDED DOCUMENT BRIEF (OLLAMA PROMPT) INJECTION ---
+          if (node.ollamaPrompt.isNotEmpty) {
+            finalOutput.writeln("\n\n>>> USER'S DOCUMENT BRIEF / READING INSTRUCTIONS <<<");
+            finalOutput.writeln(node.ollamaPrompt);
+            finalOutput.writeln(">>> END BRIEF <<<\n");
+          }
+
+          // --- FIX: ADDED ENTITY PILL CONTEXT INJECTION ---
+          if (node.redleafPills.isNotEmpty) {
+             finalOutput.writeln("\n\n>>> KEY ENTITIES TO TRACK IN THIS DOCUMENT <<<");
+             for (var pill in node.redleafPills) {
+               // We fetch the context for the pill so the AI has background knowledge on what this entity actually is.
+               finalOutput.writeln(await fetchContextForPill(pill));
+             }
+             finalOutput.writeln(">>> END ENTITY TRACKING <<<\n");
+          }
 
           if (node.pinnedComments.isNotEmpty) {
             finalOutput.writeln("\n\n>>> HUMAN CURATION FOR DOCUMENT #$docId <<<");
@@ -313,18 +328,15 @@ class RedleafService {
     return "[Error fetching Document data for input: ${node.content}]";
   }
 
-  // --- NEW: Fetch Comments directly for the UI Panel ---
   Future<List<dynamic>> fetchCommentsForDocument(String docIdStr) async {
     if (!await _ensureAuth()) return [];
     
-    // Clean up the input string to just get the ID (same logic as fetchDocumentText)
     final match = RegExp(r'(?:id:\s*)?(\d+)').firstMatch(docIdStr.trim());
     final docId = match != null ? match.group(1) : docIdStr.trim();
     if (docId == null || docId.isEmpty) return [];
 
     try {
       final url = Uri.parse('$apiUrl/api/document/$docId/curation');
-      // Pass the cookie so Flask knows we are authenticated
       final res = await http.get(url, headers: {'Cookie': _cookie}); 
       
       if (res.statusCode == 200) {
