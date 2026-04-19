@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../state/graph_state.dart';
 import '../../state/network_state.dart';
+import '../side_panel.dart'; // --- FIX: Added for parseRichText ---
 
 class WikiReaderNodePanel extends StatefulWidget {
   final String nodeId;
@@ -70,6 +71,7 @@ class _WikiReaderNodePanelState extends State<WikiReaderNodePanel> {
   @override
   Widget build(BuildContext context) {
     final graphState = context.watch<GraphState>();
+    final networkState = context.watch<NetworkState>(); // --- FIX: Needed for parseRichText ---
     final node = graphState.nodes[widget.nodeId];
     if (node == null) return const SizedBox.shrink();
 
@@ -156,7 +158,18 @@ class _WikiReaderNodePanelState extends State<WikiReaderNodePanel> {
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(color: const Color(0xFF222222), borderRadius: BorderRadius.circular(8)),
               child: SingleChildScrollView(
-                child: SelectableText(_preview, style: const TextStyle(color: Colors.white70, fontSize: 13, fontFamily: 'monospace')),
+                // --- FIX: Use SelectableText.rich and parseRichText to make links clickable ---
+                child: SelectableText.rich(
+                  parseRichText(
+                    _preview, 
+                    networkState.redleafService.apiUrl,
+                    graphState: graphState,
+                    networkState: networkState,
+                    context: context,
+                    currentNodeId: widget.nodeId
+                  ),
+                  style: const TextStyle(color: Colors.white70, fontSize: 13, fontFamily: 'monospace')
+                ),
               ),
             ),
           )

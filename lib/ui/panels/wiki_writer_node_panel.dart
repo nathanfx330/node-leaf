@@ -256,6 +256,50 @@ class _WikiWriterInterfaceState extends State<_WikiWriterInterface> {
     }
   }
 
+  // --- NEW: Obliterate Logic ---
+  void _obliterateCurrentPage() async {
+    final title = _titleCtrl.text.trim();
+    if (title.isEmpty) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF333333),
+        title: const Text("Obliterate Wiki Page", style: TextStyle(color: Colors.redAccent)),
+        content: Text("Are you absolutely sure you want to permanently delete '$title.md' AND all its historical backups?\n\nThis cannot be undone.", style: const TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Cancel", style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("DELETE PERMANENTLY"),
+          ),
+        ],
+      ),
+    ) ?? false;
+
+    if (confirm) {
+      final graphState = context.read<GraphState>();
+      final networkState = context.read<NetworkState>();
+      final success = await graphState.obliterateWikiPage(title, networkState);
+      
+      if (success) {
+        _titleCtrl.clear();
+        graphState.updateWikiTitle(widget.nodeId, "");
+        graphState.updateNodeTitle(widget.nodeId, "Wiki Writer");
+        graphState.setNodeOllamaResult(widget.nodeId, "");
+        _fetchPages();
+        _fetchHistory();
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Page and history obliterated.")));
+      } else {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Failed to delete page.")));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final graphState = context.watch<GraphState>();
@@ -330,6 +374,24 @@ class _WikiWriterInterfaceState extends State<_WikiWriterInterface> {
                         )
                       ],
                     ),
+                    
+                    // --- NEW: Obliterate Button ---
+                    if (_titleCtrl.text.isNotEmpty) ...[
+                      const SizedBox(height: 5),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.redAccent, 
+                            padding: EdgeInsets.zero, 
+                            minimumSize: const Size(0, 0)
+                          ),
+                          icon: const Icon(Icons.delete_forever, size: 16),
+                          label: const Text("Obliterate Page & History"),
+                          onPressed: _obliterateCurrentPage,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 10),
 
                     // --- DIRECTORY BROWSER ---

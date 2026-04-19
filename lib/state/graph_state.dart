@@ -36,10 +36,10 @@ Map<String, dynamic> _computeNodeRank(Map<String, String> pageContents) {
         // Normalize the target string exactly how we normalize filenames
         final safeTarget = rawTarget.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').replaceAll(' ', '_');
         
-        // Only add edges to pages that actually exist in our wiki
-        if (pages.contains(safeTarget)) {
-          uniqueTargets.add(safeTarget);
-        }
+        // --- FIX: Removed the strict pages.contains() check ---
+        // By allowing "phantom" targets, the NodeRank math will identify the
+        // most critical missing pages in the Wiki.
+        uniqueTargets.add(safeTarget);
       }
     }
     outLinks[page] = uniqueTargets.toList();
@@ -47,31 +47,42 @@ Map<String, dynamic> _computeNodeRank(Map<String, String> pageContents) {
 
   // 2. NodeRank Algorithm (Markov Chain)
   Map<String, double> ranks = { for (var p in pages) p: 1.0 / N };
-  const double d = 0.85; // Damping factor (probability of clicking a link vs random jumping)
-  const int iterations = 25; // 25 iterations is highly accurate for graphs under 10k nodes
+  
+  // We also need to add all phantom targets to the rank list so the math works
+  for (var targets in outLinks.values) {
+    for (var target in targets) {
+        if (!ranks.containsKey(target)) {
+            ranks[target] = 0.0; // Start phantoms at 0
+        }
+    }
+  }
+
+  final int totalNodes = ranks.length;
+  const double d = 0.85; // Damping factor
+  const int iterations = 25; 
 
   for (int i = 0; i < iterations; i++) {
     // Initialize new ranks with the random jump probability
-    Map<String, double> newRanks = { for (var p in pages) p: (1.0 - d) / N };
+    Map<String, double> newRanks = { for (var p in ranks.keys) p: (1.0 - d) / totalNodes };
     double danglingSum = 0.0;
 
-    // Find "Dangling Nodes" (pages with no outgoing links)
-    for (var p in pages) {
-      if (outLinks[p]!.isEmpty) {
+    // Find "Dangling Nodes" (pages with no outgoing links, including phantom pages)
+    for (var p in ranks.keys) {
+      if (!outLinks.containsKey(p) || outLinks[p]!.isEmpty) {
         danglingSum += ranks[p]!;
       }
     }
 
     // Dangling nodes essentially link to EVERY page equally
     if (danglingSum > 0) {
-        final share = (d * danglingSum) / N;
-        for (var p in pages) {
+        final share = (d * danglingSum) / totalNodes;
+        for (var p in ranks.keys) {
           newRanks[p] = newRanks[p]! + share;
         }
     }
 
     // Distribute rank across existing edges
-    for (var p in pages) {
+    for (var p in outLinks.keys) {
       final targets = outLinks[p]!;
       if (targets.isNotEmpty) {
         final contribution = (ranks[p]! * d) / targets.length;
@@ -86,7 +97,7 @@ Map<String, dynamic> _computeNodeRank(Map<String, String> pageContents) {
   // 3. Normalize for the UI (Scale highest page to exactly 1.0)
   double maxRank = ranks.values.fold(0.0, (m, v) => v > m ? v : m);
   if (maxRank > 0) {
-    for (var p in pages) {
+    for (var p in ranks.keys) {
       ranks[p] = ranks[p]! / maxRank; 
     }
   }
@@ -351,6 +362,47 @@ class GraphState extends ChangeNotifier {
     } catch (e) {
       debugPrint("Failed to write wiki page: $e");
       return false;
+    }
+  }
+  
+  // --- NEW: Obliterate Wiki Page ---
+  Future<bool> obliterateWikiPage(String title, NetworkState networkState) async {
+    if (title.trim().isEmpty) return false;
+    final dir = await _getWikiDirectory(networkState);
+    if (dir == null) return false;
+    
+    final safeTitle = title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').replaceAll(' ', '_');
+    
+    try {
+        // 1. Delete the main file
+        final mainFile = File("${dir.path}${Platform.pathSeparator}$safeTitle.md");
+        if (await mainFile.exists()) {
+            await mainFile.delete();
+            debugPrint("Obliterated main file: ${mainFile.path}");
+        }
+        
+        // 2. Delete ALL history backups
+        final historyDir = Directory("${dir.path}${Platform.pathSeparator}.history");
+        if (await historyDir.exists()) {
+            final entities = historyDir.listSync();
+            for (var entity in entities) {
+                if (entity is File && entity.path.endsWith('.md')) {
+                    final filename = entity.path.split(Platform.pathSeparator).last;
+                    if (filename.startsWith("${safeTitle}_")) {
+                        await entity.delete();
+                        debugPrint("Obliterated backup: ${entity.path}");
+                    }
+                }
+            }
+        }
+        
+        // 3. Recalculate graph
+        calculateWikiGraph(networkState);
+        return true;
+        
+    } catch (e) {
+        debugPrint("Failed to obliterate wiki page: $e");
+        return false;
     }
   }
 

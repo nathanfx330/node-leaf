@@ -31,14 +31,23 @@ class ChatAgent {
 
     StringBuffer contextBuffer = StringBuffer();
     
-    // --- FIX: Intercept System Instructions for Wiki Writer Mode ---
     String systemInstructions = node.ollamaPrompt.isNotEmpty ? node.ollamaPrompt : "You are a helpful research assistant.";
 
+    // --- FIX: Extremely strict constraints on the Chat Agent to prevent the "20 Questions" bug ---
     if (node.type == NodeType.wikiWriter) {
-      systemInstructions = "You are an Editorial Planner helping the user prepare to rewrite a Wiki page. Discuss the plan, answer questions using the provided context, and confirm the changes. DO NOT output the rewritten markdown document yourself. Keep your responses conversational and concise. Remind the user to click the 'EXECUTE REWRITE' button when the plan is agreed upon.";
+      systemInstructions = """You are an Editorial Planner helping the user prepare to rewrite a Wiki page.
+Discuss the plan, answer questions using the provided context, and confirm the changes to be made. 
+
+CRITICAL WIKI RULES YOU MUST ENFORCE AND DISCUSS:
+1. All links to other pages MUST use double brackets: [[Page Name]]. NEVER use standard markdown links [text](url) or bolding **text** to indicate a link.
+2. If the user asks to link something or emphasize an entity, confirm you will use the [[ ]] syntax.
+3. Citations must be preserved exactly as [Doc X].
+
+BEHAVIORAL CONSTRAINTS:
+1. DO NOT output the rewritten markdown document yourself. Keep your responses conversational and concise. 
+2. DO NOT output long lists of questions for the user. If you need clarification, ask ONE concise follow-up question.
+3. If the plan is clear, simply acknowledge the instructions and remind the user to click the 'EXECUTE WRITE' button to generate the draft.""";
     } else if (node.ollamaNoBacktalk) {
-      // We only apply the strict no-backtalk rule if it's a standard chat node, 
-      // because in the Wiki Writer, we explicitly want a conversational planner.
       systemInstructions += "\n\nYou are a strict, analytical research agent. You MUST base your answers entirely on the provided REDLEAF CONTEXT. You MUST include inline citations exactly like [Doc 12] when stating facts derived from the context. Do not use conversational filler or backtalk.";
     }
     // --- END FIX ---
