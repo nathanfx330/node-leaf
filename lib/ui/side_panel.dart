@@ -111,32 +111,68 @@ TextSpan _parseLinksInline(String text, String baseUrl, GraphState? graphState, 
           recognizer: TapGestureRecognizer()
             ..onTap = () async {
               if (graphState != null && networkState != null && context != null) {
-                // --- MODIFIED: Spawning Deep Study Node instead of Wiki Reader ---
-                if (currentNodeId != null && graphState.nodes.containsKey(currentNodeId)) {
-                   final node = graphState.nodes[currentNodeId]!;
-                   if (node.type == NodeType.wikiWriter || node.type == NodeType.council) {
-                      final content = await graphState.readWikiPage(wikiTarget, networkState);
-                      graphState.setNodeOllamaResult(currentNodeId, "=== PREVIEWING LINKED PAGE: $wikiTarget.md ===\n\n$content");
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Loaded [[$wikiTarget]] into preview.")));
-                      return;
-                   }
-                }
-                
-                // Spawn a new Deep Study node to research the suggested topic
                 final String safeWikiTarget = wikiTarget.replaceAll('_', ' '); // Clean up the filename for the search query
                 
-                // Offset the new node slightly from the center so it doesn't completely cover existing nodes
-                final Offset newPos = const Offset(kWorldSize / 2 + 50, kWorldSize / 2 + 50);
-                
-                graphState.addNode(newPos, NodeType.study);
-                final newNodeId = graphState.selectedNodeIds.first;
-                
-                graphState.updateNodeContent(newNodeId, safeWikiTarget);
-                graphState.updateNodeTitle(newNodeId, "Study: $safeWikiTarget");
-                
-                ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text("Spawned new Deep Study for '$safeWikiTarget'"))
-                );
+                // --- FIX: Check if the file exists FIRST ---
+                bool fileExists = false;
+                try {
+                  // listWikiPages is fast because it just reads the directory contents
+                  final existingPages = await graphState.listWikiPages(networkState);
+                  fileExists = existingPages.contains(wikiTarget);
+                } catch (e) {
+                  debugPrint("Error checking wiki page existence: $e");
+                }
+
+                if (fileExists) {
+                  // --- OLD BEHAVIOR: The file exists, so we want to read it ---
+                  final content = await graphState.readWikiPage(wikiTarget, networkState);
+                  
+                  if (currentNodeId != null && graphState.nodes.containsKey(currentNodeId)) {
+                     final node = graphState.nodes[currentNodeId]!;
+                     // If we are in a writer or council node, preview it right here
+                     if (node.type == NodeType.wikiWriter || node.type == NodeType.council) {
+                        graphState.setNodeOllamaResult(currentNodeId, "=== PREVIEWING LINKED PAGE: $wikiTarget.md ===\n\n$content");
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Loaded [[$wikiTarget]] into preview.")));
+                        return;
+                     }
+                  }
+                  
+                  // Otherwise, spawn a reader node
+                  Offset newPos = const Offset(kWorldSize / 2 + 50, kWorldSize / 2 + 50); 
+                  if (currentNodeId != null && graphState.nodes.containsKey(currentNodeId)) {
+                    final currentNode = graphState.nodes[currentNodeId]!;
+                    newPos = currentNode.position + Offset(kNodeWidth / 2, currentNode.currentHeight + 150);
+                  }
+                  
+                  graphState.addNode(newPos, NodeType.wikiReader);
+                  final newNodeId = graphState.selectedNodeIds.first;
+                  graphState.updateWikiTitle(newNodeId, wikiTarget);
+                  graphState.updateNodeTitle(newNodeId, "Read: $wikiTarget");
+                  graphState.setNodeOllamaResult(newNodeId, content);
+                  
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text("Opened Wiki Reader for '$wikiTarget'"))
+                  );
+
+                } else {
+                  // --- NEW BEHAVIOR: The file DOES NOT exist, so we want to study it ---
+                  Offset newPos = const Offset(kWorldSize / 2 + 50, kWorldSize / 2 + 50); 
+                  
+                  if (currentNodeId != null && graphState.nodes.containsKey(currentNodeId)) {
+                    final currentNode = graphState.nodes[currentNodeId]!;
+                    newPos = currentNode.position + Offset(kNodeWidth / 2, currentNode.currentHeight + 150);
+                  }
+                  
+                  graphState.addNode(newPos, NodeType.study);
+                  final newNodeId = graphState.selectedNodeIds.first;
+                  
+                  graphState.updateNodeContent(newNodeId, safeWikiTarget);
+                  graphState.updateNodeTitle(newNodeId, "Study: $safeWikiTarget");
+                  
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text("Spawned new Deep Study for missing page: '$safeWikiTarget'"))
+                  );
+                }
               }
             },
         ),
