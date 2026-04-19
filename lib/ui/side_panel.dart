@@ -26,7 +26,7 @@ import 'panels/briefing_node_panel.dart';
 import 'panels/persona_node_panel.dart';
 import 'panels/research_party_node_panel.dart'; 
 import 'panels/document_node_panel.dart'; 
-import 'panels/merge_node_panel.dart'; // <-- NEW PANEL ADDED
+import 'panels/merge_node_panel.dart'; 
 
 // EXPORT common UI elements so previously extracted panels don't break
 export 'dialogs/entity_search_dialog.dart';
@@ -111,20 +111,32 @@ TextSpan _parseLinksInline(String text, String baseUrl, GraphState? graphState, 
           recognizer: TapGestureRecognizer()
             ..onTap = () async {
               if (graphState != null && networkState != null && context != null) {
-                final content = await graphState.readWikiPage(wikiTarget, networkState);
+                // --- MODIFIED: Spawning Deep Study Node instead of Wiki Reader ---
                 if (currentNodeId != null && graphState.nodes.containsKey(currentNodeId)) {
                    final node = graphState.nodes[currentNodeId]!;
                    if (node.type == NodeType.wikiWriter || node.type == NodeType.council) {
+                      final content = await graphState.readWikiPage(wikiTarget, networkState);
                       graphState.setNodeOllamaResult(currentNodeId, "=== PREVIEWING LINKED PAGE: $wikiTarget.md ===\n\n$content");
                       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Loaded [[$wikiTarget]] into preview.")));
                       return;
                    }
                 }
-                graphState.addNode(const Offset(kWorldSize / 2, kWorldSize / 2), NodeType.wikiReader);
+                
+                // Spawn a new Deep Study node to research the suggested topic
+                final String safeWikiTarget = wikiTarget.replaceAll('_', ' '); // Clean up the filename for the search query
+                
+                // Offset the new node slightly from the center so it doesn't completely cover existing nodes
+                final Offset newPos = const Offset(kWorldSize / 2 + 50, kWorldSize / 2 + 50);
+                
+                graphState.addNode(newPos, NodeType.study);
                 final newNodeId = graphState.selectedNodeIds.first;
-                graphState.updateWikiTitle(newNodeId, wikiTarget);
-                graphState.updateNodeTitle(newNodeId, "Read: $wikiTarget");
-                graphState.setNodeOllamaResult(newNodeId, content);
+                
+                graphState.updateNodeContent(newNodeId, safeWikiTarget);
+                graphState.updateNodeTitle(newNodeId, "Study: $safeWikiTarget");
+                
+                ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text("Spawned new Deep Study for '$safeWikiTarget'"))
+                );
               }
             },
         ),
@@ -181,7 +193,7 @@ class _SidePanelState extends State<SidePanel> {
     if (node.type == NodeType.relationship) return RelationshipNodePanel(nodeId: node.id);
     if (node.type == NodeType.catalog) return CatalogNodePanel(nodeId: node.id);
     if (node.type == NodeType.intersection) return IntersectionNodePanel(nodeId: node.id);
-    if (node.type == NodeType.merge) return MergeNodePanel(nodeId: node.id); // <-- ADDED ROUTING
+    if (node.type == NodeType.merge) return MergeNodePanel(nodeId: node.id);
     if (node.type == NodeType.chat) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: ChatNodePanel(nodeId: node.id)); 
     if (node.type == NodeType.briefing) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: BriefingNodePanel(nodeId: node.id));
     if (node.type == NodeType.study) return Container(width: double.infinity, color: const Color(0xFF1A1A1A), child: StudyNodePanel(nodeId: node.id)); 
