@@ -36,7 +36,6 @@ class OutputAgent {
 
     // 1. Gather Context
     for (var n in sequence) {
-      // --- FIX: Added merge and researchParty to the ignore list ---
       if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study || n.type == NodeType.summarize || n.type == NodeType.wikiWriter || n.type == NodeType.council || n.type == NodeType.researchParty || n.type == NodeType.merge) continue; 
 
       if (n.type == NodeType.persona) {
@@ -158,11 +157,18 @@ Your Goal: "$userInstructions"
 Current Accumulated Notes: $accumulatedNotes
 
 Analyze the goal and current notes. Determine the SINGLE best next step.
+
+You have access to an Advanced Search Engine. You can filter by strict text queries, required entities that MUST be on the page, and specific file types.
+File types available: ["PDF", "TXT", "HTML", "SRT" (transcripts), "EML" (emails)].
+Entity labels available: PERSON, ORG, GPE (Geopolitical), LOC (Location), DATE, EVENT.
+
 Return JSON ONLY:
 {
   "thought": "Internal reasoning about what information is missing.",
   "action": "search" OR "finish",
-  "query": "Your specific search phrase if action is search"
+  "query": "General text keyword search (leave blank if relying only on entities)",
+  "required_entities": [{"text": "Entity Name", "label": "LABEL"}],
+  "file_types": []
 }""";
 
         try {
@@ -178,21 +184,29 @@ Return JSON ONLY:
           final action = decision['action'] ?? 'finish';
           final thought = decision['thought'] ?? 'No thought provided.';
           final query = decision['query'] ?? '';
+          final List<dynamic> rawEntities = decision['required_entities'] ?? [];
+          final List<dynamic> rawFileTypes = decision['file_types'] ?? [];
           
           node.ollamaResult += "> Thought: $thought\n"; onUpdate();
           
-          if (action == 'finish' || query.isEmpty) {
+          if (action == 'finish' || (query.isEmpty && rawEntities.isEmpty)) {
             node.ollamaResult += "> Action: Sufficient data gathered. Moving to synthesis.\n"; onUpdate();
             break;
           }
           
           if (checkForceAnswer()) break;
 
-          node.ollamaResult += "> Action: Searching Redleaf for '$query'...\n"; onUpdate();
-          final searchContext = await networkState.redleafService.fetchFtsContext(query);
+          node.ollamaResult += "> Action: Searching Redleaf (Query: '${query.isEmpty ? 'None' : query}', Entities: ${rawEntities.length}, Types: ${rawFileTypes.isEmpty ? 'All' : rawFileTypes.join(', ')})...\n"; onUpdate();
+          
+          // --- NEW: Using Advanced Search API ---
+          final searchContext = await networkState.redleafService.fetchAdvancedAgentContext(
+            query: query,
+            entities: rawEntities,
+            fileTypes: rawFileTypes.map((e) => e.toString()).toList(),
+          );
           
           if (searchContext.contains("[No results found")) {
-            accumulatedNotes += "\nSearch for '$query' yielded no results.";
+            accumulatedNotes += "\nSearch yielded no results for this specific combination.";
             continue;
           }
           

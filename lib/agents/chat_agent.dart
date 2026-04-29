@@ -157,11 +157,18 @@ User Message: "$userMessage"
 Current Context gathered so far: ${accumulatedNotes.isEmpty ? "None" : accumulatedNotes}
 
 Do you need more factual context from the database to answer the user?
+
+You have access to an Advanced Search Engine. You can filter by strict text queries, required entities that MUST be on the page, and specific file types.
+File types available: ["PDF", "TXT", "HTML", "SRT" (transcripts), "EML" (emails)].
+Entity labels available: PERSON, ORG, GPE (Geopolitical), LOC (Location), DATE, EVENT.
+
 Return JSON ONLY:
 {
   "thought": "Reasoning about what is missing.",
   "action": "search" OR "finish",
-  "query": "Your specific search phrase if action is search"
+  "query": "General text keyword search (leave blank if relying only on entities)",
+  "required_entities": [{"text": "Entity Name", "label": "LABEL"}],
+  "file_types": []
 }""";
 
         try {
@@ -174,14 +181,24 @@ Return JSON ONLY:
             
           final decision = _parseAgentJSON(responseText);
           
-          if (decision['action'] == 'finish' || (decision['query'] ?? '').isEmpty) break;
+          final action = decision['action'] ?? 'finish';
+          final query = decision['query'] ?? '';
+          final List<dynamic> rawEntities = decision['required_entities'] ?? [];
+          final List<dynamic> rawFileTypes = decision['file_types'] ?? [];
+          
+          if (action == 'finish' || (query.isEmpty && rawEntities.isEmpty)) break;
           if (checkForceAnswer()) break;
 
-          final query = decision['query'];
-          node.chatHistory.last["content"] = "🤖 Agent: Searching Redleaf for '$query'..."; 
+          node.chatHistory.last["content"] = "🤖 Agent: Searching Redleaf (Query: '${query.isEmpty ? 'None' : query}', Entities: ${rawEntities.length}, Types: ${rawFileTypes.isEmpty ? 'All' : rawFileTypes.join(', ')})..."; 
           onUpdate();
           
-          final searchContext = await networkState.redleafService.fetchFtsContext(query);
+          // --- NEW: Using Advanced Search API ---
+          final searchContext = await networkState.redleafService.fetchAdvancedAgentContext(
+            query: query,
+            entities: rawEntities,
+            fileTypes: rawFileTypes.map((e) => e.toString()).toList(),
+          );
+          
           if (checkForceAnswer()) break;
 
           node.chatHistory.last["content"] = "🤖 Agent: Reading documents and taking notes..."; 

@@ -14,7 +14,7 @@ class ResearchPartyAgent {
       String clean = response.replaceAll('```json', '').replaceAll('```', '').trim();
       return jsonDecode(clean);
     } catch (e) {
-      return {"topics": []};
+      return {"searches": []};
     }
   }
 
@@ -74,13 +74,24 @@ ${wikiGraphContext.toString()}
 UPSTREAM CONTEXT:
 ${upstreamContext.isEmpty ? "None" : upstreamContext.toString()}
 
-Task: Based on the Directive and what is currently known, identify 2 specific, distinct topics or entities to forage for in the Redleaf Database. You are looking for hard, primary-source evidence.
+Task: Based on the Directive and what is currently known, identify 2 specific, distinct search strategies to forage for hard, primary-source evidence in the Redleaf Database.
+
+You have access to an Advanced Search Engine. You can filter by strict text queries, required entities that MUST be on the page, and specific file types.
+File types available: ["PDF", "TXT", "HTML", "SRT" (transcripts), "EML" (emails)].
+Entity labels available: PERSON, ORG, GPE (Geopolitical), LOC (Location), DATE, EVENT.
+
 Return JSON ONLY:
 {
-  "topics": ["Specific Search Query 1", "Specific Search Query 2"]
+  "searches": [
+    {
+      "query": "Specific text keyword search (leave blank if relying only on entities)",
+      "required_entities": [{"text": "Entity Name", "label": "LABEL"}],
+      "file_types": []
+    }
+  ]
 }""";
 
-    List<String> topicsToForage = [];
+    List<Map<String, dynamic>> searchesToForage = [];
     try {
       final responseText = await OllamaService.generateText(
         baseUrl: networkState.ollamaUrl,
@@ -89,16 +100,19 @@ Return JSON ONLY:
         format: "json",
       );
       final scoutJson = _parseAgentJSON(responseText);
-      if (scoutJson['topics'] is List) {
-        topicsToForage = List<String>.from(scoutJson['topics']);
+      if (scoutJson['searches'] is List) {
+        searchesToForage = List<Map<String, dynamic>>.from(scoutJson['searches']);
+      } else if (scoutJson['topics'] is List) {
+        // Fallback in case the LLM hallucinates the older format
+        searchesToForage = (scoutJson['topics'] as List).map((t) => {"query": t.toString()}).toList();
       }
     } catch (e) {
       node.ollamaResult += "> [Scout Error: $e]\n"; onUpdate();
       return;
     }
 
-    if (topicsToForage.isEmpty) {
-        topicsToForage = [directive]; // Fallback to directive
+    if (searchesToForage.isEmpty) {
+        searchesToForage = [{"query": directive, "required_entities": [], "file_types": []}]; // Fallback
     }
 
     if (checkForceAnswer()) return;
@@ -106,12 +120,23 @@ Return JSON ONLY:
     // --- PHASE 2: FORAGING (The ReAct Loop) ---
     StringBuffer foragedFacts = StringBuffer();
 
-    for (String topic in topicsToForage) {
+    for (var searchConfig in searchesToForage) {
         if (checkForceAnswer()) break;
-
-        node.ollamaResult += "\n> [Forager] Searching Redleaf primary sources for: '$topic'...\n"; onUpdate();
         
-        final searchContext = await networkState.redleafService.fetchFtsContext(topic);
+        final query = searchConfig['query'] ?? '';
+        final List<dynamic> rawEntities = searchConfig['required_entities'] ?? [];
+        final List<dynamic> rawFileTypes = searchConfig['file_types'] ?? [];
+        
+        String logDesc = "Query: '${query.isEmpty ? 'None' : query}', Entities: ${rawEntities.length}, Types: ${rawFileTypes.isEmpty ? 'All' : rawFileTypes.join(', ')}";
+
+        node.ollamaResult += "\n> [Forager] Searching Redleaf primary sources ($logDesc)...\n"; onUpdate();
+        
+        // --- NEW: Using Advanced Search API ---
+        final searchContext = await networkState.redleafService.fetchAdvancedAgentContext(
+          query: query,
+          entities: rawEntities,
+          fileTypes: rawFileTypes.map((e) => e.toString()).toList(),
+        );
         
         if (searchContext.contains("[No results found")) {
           node.ollamaResult += "  - No primary source data found. Skipping.\n"; onUpdate();
@@ -119,7 +144,7 @@ Return JSON ONLY:
         }
 
         node.ollamaResult += "> [Forager] Extracting verified facts...\n"; onUpdate();
-        final factPrompt = """You are a Forager. Extract ONLY verified facts, numbers, and direct primary evidence about "$topic".
+        final factPrompt = """You are a Forager. Extract ONLY verified facts, numbers, and direct primary evidence answering this context parameter: "$logDesc".
 Text to Analyze:
 $searchContext
 
@@ -135,7 +160,7 @@ If nothing is relevant, return "Nothing relevant." """;
             prompt: factPrompt,
           );
           if (!extractedNotes.contains("Nothing relevant")) {
-            foragedFacts.writeln("\nVERIFIED EVIDENCE FOR '$topic':\n$extractedNotes");
+            foragedFacts.writeln("\nVERIFIED EVIDENCE FOR ($logDesc):\n$extractedNotes");
           }
         } catch(e) {
             node.ollamaResult += "  - [Error during extraction: $e]\n"; onUpdate();

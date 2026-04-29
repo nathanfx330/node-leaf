@@ -42,6 +42,7 @@ class RedleafService {
       _updateCookie(postRes);
       
       if (postRes.statusCode == 302 || postRes.headers['location'] != null) {
+        await _refreshCsrfToken();
         isLoggedIn = true;
         return true;
       }
@@ -55,11 +56,33 @@ class RedleafService {
     }
   }
 
+  Future<void> _refreshCsrfToken() async {
+    try {
+      final dashRes = await http.get(
+        Uri.parse('$apiUrl/dashboard'), 
+        headers: {'Cookie': _cookie}
+      );
+      _updateCookie(dashRes);
+      final dashDoc = parse(dashRes.body);
+      final newCsrf = dashDoc.querySelector('input[name="csrf_token"]');
+      if (newCsrf != null) {
+        _csrfToken = newCsrf.attributes['value'] ?? _csrfToken;
+      }
+    } catch (e) {
+      debugPrint("Failed to refresh CSRF token: $e");
+    }
+  }
+
   void _updateCookie(http.Response response) {
     String? rawCookie = response.headers['set-cookie'];
     if (rawCookie != null) {
-      List<String> parts = rawCookie.split(';');
-      _cookie = parts.firstWhere((p) => p.contains('session='), orElse: () => parts[0]);
+      final matches = RegExp(r'session=([^;,]+)').allMatches(rawCookie);
+      for (var match in matches) {
+        final val = match.group(1);
+        if (val != null && val.trim().isNotEmpty && val != '""' && val != 'deleted') {
+          _cookie = "session=$val";
+        }
+      }
     }
   }
 
@@ -216,6 +239,69 @@ class RedleafService {
 
   Future<String> fetchFtsContext(String query) async {
     return await fetchAdvancedFtsContext(query, 5, []);
+  }
+
+  // --- NEW: Advanced Search Agent Context Method with Self-Healing CSRF ---
+  Future<String> fetchAdvancedAgentContext({
+    required String query,
+    required List<dynamic> entities,
+    required List<String> fileTypes,
+  }) async {
+    if (!await _ensureAuth()) return "[Auth Error: Not connected to Redleaf]";
+    try {
+      final requestBody = jsonEncode({
+        "q": query,
+        "entities": entities,
+        "file_types": fileTypes,
+        "limit": 5 
+      });
+
+      var res = await http.post(
+        Uri.parse('$apiUrl/api/search/advanced'),
+        headers: {
+          'Cookie': _cookie,
+          'Content-Type': 'application/json',
+          'X-CSRFToken': _csrfToken, 
+        },
+        body: requestBody,
+      );
+
+      // Self-Healing CSRF Loop
+      if (res.statusCode == 400) {
+        debugPrint("400 Bad Request caught. Refreshing CSRF token and retrying...");
+        await _refreshCsrfToken();
+        
+        res = await http.post(
+          Uri.parse('$apiUrl/api/search/advanced'),
+          headers: {
+            'Cookie': _cookie,
+            'Content-Type': 'application/json',
+            'X-CSRFToken': _csrfToken, 
+          },
+          body: requestBody,
+        );
+      }
+
+      if (res.statusCode == 200) {
+        final List<dynamic> data = _safeJsonDecode(res);
+        if (data.isEmpty) {
+          return "[No results found for this specific query and filter combination.]";
+        }
+        
+        StringBuffer sb = StringBuffer();
+        sb.writeln("--- ADVANCED SEARCH RESULTS ---");
+        for (var item in data) {
+          sb.writeln("- Snippet from [Doc ${item['doc_id']}] ${item['relative_path']} (Page ${item['page_number']}): \"${item['snippet']}\"");
+        }
+        sb.writeln("-------------------------------");
+        return sb.toString();
+      } else {
+        debugPrint("Advanced Agent Search returned ${res.statusCode}: ${res.body}");
+      }
+    } catch (e) {
+      debugPrint("Advanced Agent Search error: $e");
+    }
+    return "[Error fetching advanced search results]";
   }
 
   Future<List<Map<String, dynamic>>> fetchFtsResultsUI(String query) async {
@@ -424,7 +510,7 @@ class RedleafService {
     if (!await _ensureAuth()) return null;
 
     try {
-      final createRes = await http.post(
+      var createRes = await http.post(
         Uri.parse('$apiUrl/api/synthesis/reports'),
         headers: {
           'Cookie': _cookie,
@@ -433,6 +519,20 @@ class RedleafService {
         },
         body: jsonEncode({'title': title})
       );
+      
+      // Self-Healing CSRF Loop for Export
+      if (createRes.statusCode == 400) {
+        await _refreshCsrfToken();
+        createRes = await http.post(
+          Uri.parse('$apiUrl/api/synthesis/reports'),
+          headers: {
+            'Cookie': _cookie,
+            'Content-Type': 'application/json',
+            'X-CSRFToken': _csrfToken, 
+          },
+          body: jsonEncode({'title': title})
+        );
+      }
       
       if (createRes.statusCode != 201 && createRes.statusCode != 200) {
         debugPrint("Failed to create Synthesis report: ${createRes.body}");
@@ -459,7 +559,7 @@ class RedleafService {
         "content": contentBlocks
       };
 
-      final saveRes = await http.post(
+      var saveRes = await http.post(
         Uri.parse('$apiUrl/api/synthesis/$reportId/content'),
         headers: {
           'Cookie': _cookie,
@@ -468,6 +568,20 @@ class RedleafService {
         },
         body: jsonEncode(tiptapJson)
       );
+      
+      // Self-Healing CSRF Loop for Saving Content
+      if (saveRes.statusCode == 400) {
+        await _refreshCsrfToken();
+        saveRes = await http.post(
+          Uri.parse('$apiUrl/api/synthesis/$reportId/content'),
+          headers: {
+            'Cookie': _cookie,
+            'Content-Type': 'application/json',
+            'X-CSRFToken': _csrfToken,
+          },
+          body: jsonEncode(tiptapJson)
+        );
+      }
 
       if (saveRes.statusCode == 200) {
         return '$apiUrl/synthesis/report/$reportId'; 
