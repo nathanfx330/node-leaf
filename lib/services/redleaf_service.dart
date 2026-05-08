@@ -291,7 +291,11 @@ class RedleafService {
         StringBuffer sb = StringBuffer();
         sb.writeln("--- ADVANCED SEARCH RESULTS ---");
         for (var item in data) {
-          sb.writeln("- Snippet from [Doc ${item['doc_id']}] ${item['relative_path']} (Page ${item['page_number']}): \"${item['snippet']}\"");
+          // --- MODIFIED: Inject metadata if available ---
+          String meta = item['metadata_str'] ?? "";
+          String metaTag = meta.isNotEmpty ? " | METADATA: $meta" : "";
+          
+          sb.writeln("- Snippet from [Doc ${item['doc_id']}] ${item['relative_path']}$metaTag (Page ${item['page_number']}): \"${item['snippet']}\"");
         }
         sb.writeln("-------------------------------");
         return sb.toString();
@@ -375,8 +379,12 @@ class RedleafService {
           String text = data['text'] ?? '';
           if (text.length > 4000) text = "${text.substring(0, 4000)}\n\n... [Document Truncated for AI Context] ...";
           
+          // --- NEW: Grab the metadata ---
+          String meta = data['metadata_str'] ?? "";
+          String metaTag = meta.isNotEmpty ? " | METADATA: $meta" : "";
+          
           StringBuffer finalOutput = StringBuffer();
-          finalOutput.writeln("[Redleaf Raw Text for Document #$docId${startPage != null ? ' (Pages $startPage-$endPage)' : ''}]:\n$text");
+          finalOutput.writeln("[Redleaf Raw Text for Document #$docId$metaTag${startPage != null ? ' (Pages $startPage-$endPage)' : ''}]:\n$text");
 
           // --- FIX: ADDED DOCUMENT BRIEF (OLLAMA PROMPT) INJECTION ---
           if (node.ollamaPrompt.isNotEmpty) {
@@ -433,6 +441,50 @@ class RedleafService {
       debugPrint("Failed to fetch comments for Doc $docId: $e");
     }
     return [];
+  }
+  
+  // --- NEW: Fetch Metadata string for UI ---
+  Future<String?> fetchDocumentMetadataString(String docIdStr) async {
+    if (!await _ensureAuth()) return null;
+    
+    final match = RegExp(r'(?:id:\s*)?(\d+)').firstMatch(docIdStr.trim());
+    final docId = match != null ? match.group(1) : docIdStr.trim();
+    if (docId == null || docId.isEmpty) return null;
+
+    try {
+      final url = Uri.parse('$apiUrl/api/document/$docId/metadata');
+      final res = await http.get(url, headers: {'Cookie': _cookie});
+      
+      if (res.statusCode == 200) {
+        final data = _safeJsonDecode(res);
+        if (data['csl_json'] != null) {
+          try {
+            final csl = jsonDecode(data['csl_json']);
+            String title = csl['title'] ?? '';
+            String author = '';
+            if (csl['author'] != null && csl['author'].isNotEmpty) {
+              author = csl['author'][0]['literal'] ?? csl['author'][0]['family'] ?? '';
+            }
+            String year = '';
+            if (csl['issued'] != null && csl['issued']['date-parts'] != null && csl['issued']['date-parts'].isNotEmpty) {
+              year = csl['issued']['date-parts'][0][0].toString();
+            }
+            
+            List<String> parts = [];
+            if (title.isNotEmpty) parts.add('"$title"');
+            if (author.isNotEmpty) parts.add('by $author');
+            if (year.isNotEmpty) parts.add('($year)');
+            
+            if (parts.isNotEmpty) return parts.join(' ');
+          } catch (e) {
+            debugPrint("Failed to parse CSL JSON: $e");
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("Failed to fetch metadata for Doc $docId: $e");
+    }
+    return null;
   }
 
   Future<List<Map<String, dynamic>>> fetchAllCatalogs() async {

@@ -21,6 +21,9 @@ class _DocumentNodePanelState extends State<DocumentNodePanel> {
   List<dynamic> _comments = [];
   bool _isLoading = false;
   bool _hasFetched = false;
+  
+  // --- NEW: State variable to hold the fetched metadata string ---
+  String? _metadataString;
 
   @override
   void initState() {
@@ -29,7 +32,7 @@ class _DocumentNodePanelState extends State<DocumentNodePanel> {
     final node = graphState.nodes[widget.nodeId];
     _ctrl = TextEditingController(text: node?.content ?? "");
     _briefCtrl = TextEditingController(text: node?.ollamaPrompt ?? "");
-    if (_ctrl.text.isNotEmpty) _fetchComments();
+    if (_ctrl.text.isNotEmpty) _fetchDocumentData(); // Modified to fetch both
   }
 
   @override
@@ -41,8 +44,9 @@ class _DocumentNodePanelState extends State<DocumentNodePanel> {
       _ctrl.text = node?.content ?? "";
       _briefCtrl.text = node?.ollamaPrompt ?? "";
       _comments.clear();
+      _metadataString = null;
       _hasFetched = false;
-      if (_ctrl.text.isNotEmpty) _fetchComments();
+      if (_ctrl.text.isNotEmpty) _fetchDocumentData(); // Modified to fetch both
     }
   }
 
@@ -53,25 +57,30 @@ class _DocumentNodePanelState extends State<DocumentNodePanel> {
     super.dispose();
   }
 
-  void _fetchComments() async {
+  // --- MODIFIED: Unified function to fetch comments AND metadata ---
+  void _fetchDocumentData() async {
     final docIdStr = _ctrl.text.trim();
     if (docIdStr.isEmpty) return;
 
-    setState(() { _isLoading = true; _hasFetched = true; });
+    setState(() { _isLoading = true; _hasFetched = true; _metadataString = null; });
     
     final networkState = context.read<NetworkState>();
 
     try {
-      // Use the authenticated service method instead of a raw HTTP call
+      // 1. Fetch Comments
       final comments = await networkState.redleafService.fetchCommentsForDocument(docIdStr);
+      
+      // 2. Fetch Metadata
+      final metadata = await networkState.redleafService.fetchDocumentMetadataString(docIdStr);
       
       if (mounted) {
         setState(() { 
           _comments = comments; 
+          _metadataString = metadata;
         });
       }
     } catch (e) {
-      debugPrint("Failed to fetch comments: $e");
+      debugPrint("Failed to fetch document data: $e");
     } finally {
       if (mounted) setState(() { _isLoading = false; });
     }
@@ -101,13 +110,24 @@ class _DocumentNodePanelState extends State<DocumentNodePanel> {
               hintText: "Enter Doc ID (e.g. 12)",
               suffixIcon: IconButton(
                 icon: const Icon(Icons.download, color: Colors.white), 
-                onPressed: _fetchComments,
-                tooltip: "Fetch Comments",
+                onPressed: _fetchDocumentData,
+                tooltip: "Fetch Document Info",
               )
             ),
             onChanged: (v) => graphState.updateNodeContent(widget.nodeId, v),
-            onSubmitted: (_) => _fetchComments(),
+            onSubmitted: (_) => _fetchDocumentData(),
           ),
+          
+          // --- NEW: UI for displaying the metadata string ---
+          if (_hasFetched) ...[
+              const SizedBox(height: 4),
+              if (_isLoading)
+                 const Text("Fetching document info...", style: TextStyle(color: Colors.white54, fontSize: 11, fontStyle: FontStyle.italic))
+              else if (_metadataString != null && _metadataString!.isNotEmpty)
+                 Text("📖 $_metadataString", style: const TextStyle(color: Colors.amberAccent, fontSize: 11, fontWeight: FontWeight.bold))
+              else
+                 const Text("📄 Document found (No bibliographic metadata attached).", style: TextStyle(color: Colors.white54, fontSize: 11)),
+          ],
           
           const SizedBox(height: 20),
           const Text("Document Brief (Context for AI):", style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold)),
