@@ -1,4 +1,4 @@
-// --- File: lib/agents/chat_agent.dart (FIXED: Passed networkState to search) ---
+// --- File: lib/agents/chat_agent.dart ---
 import 'dart:convert';
 
 import '../constants.dart';
@@ -158,7 +158,13 @@ Current Context gathered so far: ${accumulatedNotes.isEmpty ? "None" : accumulat
 
 Do you need more factual context from the database to answer the user?
 
-You have access to an Advanced Search Engine. You can filter by strict text queries, required entities that MUST be on the page, and specific file types.
+CRITICAL SEARCH ENGINE RULES:
+1. The search engine uses simple keyword matching. DO NOT use boolean operators (AND, OR), parentheses, or quotes (e.g., Use "insurgent army directive", NOT "directive AND (insurgent OR army)").
+2. Do NOT provide multi-lingual queries in the same string. Pick one language per search.
+3. For entities, "mode" must be one of: "doc" (appears in document), "page" (appears on same page), or "exclude" (MUST NOT appear in the document).
+4. Use "exclude" to filter out known noise or unrelated topics.
+5. You control the "limit" of documents returned (between 1 and 15). Use a higher limit (10-15) for broad overviews, and a lower limit (1-5) for targeted, highly specific facts.
+
 File types available: ["PDF", "TXT", "HTML", "SRT" (transcripts), "EML" (emails)].
 Entity labels available: PERSON, ORG, GPE (Geopolitical), LOC (Location), DATE, EVENT.
 
@@ -167,8 +173,12 @@ Return JSON ONLY:
   "thought": "Reasoning about what is missing.",
   "action": "search" OR "finish",
   "query": "General text keyword search (leave blank if relying only on entities)",
-  "required_entities": [{"text": "Entity Name", "label": "LABEL"}],
-  "file_types": []
+  "required_entities": [
+      {"text": "Main Topic", "label": "ORG", "mode": "doc"},
+      {"text": "Irrelevant Topic", "label": "PERSON", "mode": "exclude"}
+  ],
+  "file_types": [],
+  "limit": 8
 }""";
 
         try {
@@ -183,21 +193,29 @@ Return JSON ONLY:
           
           final action = decision['action'] ?? 'finish';
           final query = decision['query'] ?? '';
-          final List<dynamic> rawEntities = decision['required_entities'] ?? [];
+          
+          // Fallback to old key just in case
+          final List<dynamic> rawEntities = decision['required_entities'] ?? decision['entity_filters'] ?? [];
           final List<dynamic> rawFileTypes = decision['file_types'] ?? [];
+          
+          // --- NEW: Extract dynamic limit safely ---
+          int dynamicLimit = node.searchLimit;
+          if (decision.containsKey('limit') && decision['limit'] is int) {
+              dynamicLimit = (decision['limit'] as int).clamp(1, 15);
+          }
           
           if (action == 'finish' || (query.isEmpty && rawEntities.isEmpty)) break;
           if (checkForceAnswer()) break;
 
-          node.chatHistory.last["content"] = "🤖 Agent: Searching Redleaf (Query: '${query.isEmpty ? 'None' : query}', Entities: ${rawEntities.length}, Types: ${rawFileTypes.isEmpty ? 'All' : rawFileTypes.join(', ')})..."; 
+          node.chatHistory.last["content"] = "🤖 Agent: Searching Redleaf (Query: '${query.isEmpty ? 'None' : query}', Entities: ${rawEntities.length}, Types: ${rawFileTypes.isEmpty ? 'All' : rawFileTypes.join(', ')}, Limit: $dynamicLimit)..."; 
           onUpdate();
           
-          // --- FIX: Passed networkState ---
           final searchContext = await networkState.redleafService.fetchAdvancedAgentContext(
             networkState: networkState,
             query: query,
             entities: rawEntities,
             fileTypes: rawFileTypes.map((e) => e.toString()).toList(),
+            limit: dynamicLimit,
           );
           
           if (checkForceAnswer()) break;

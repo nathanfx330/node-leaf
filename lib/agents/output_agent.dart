@@ -1,4 +1,4 @@
-// --- File: lib/agents/output_agent.dart (FIXED: Passed networkState to search) ---
+// --- File: lib/agents/output_agent.dart ---
 import 'dart:convert';
 
 import '../constants.dart';
@@ -160,7 +160,12 @@ Current Accumulated Notes: $accumulatedNotes
 
 Analyze the goal and current notes. Determine the SINGLE best next step.
 
-You have access to an Advanced Search Engine. You can filter by strict text queries, required entities that MUST be on the page, and specific file types.
+CRITICAL SEARCH ENGINE RULES:
+1. The search engine uses simple keyword matching. DO NOT use boolean operators (AND, OR), parentheses, or quotes (e.g., Use "insurgent army directive", NOT "directive AND (insurgent OR army)").
+2. Do NOT provide multi-lingual queries in the same string (e.g., "директива (directive)"). Pick one language per search.
+3. You may use multiple "exclude" entities, but use "doc" or "page" entities EXTREMELY sparingly (0 or 1 maximum) to avoid returning 0 results.
+4. For entities, "mode" must be one of: "doc" (must appear somewhere in the document), "page" (must appear on the exact same page as the query), or "exclude" (must NOT appear in the document). Default is "doc".
+
 File types available: ["PDF", "TXT", "HTML", "SRT" (transcripts), "EML" (emails)].
 Entity labels available: PERSON, ORG, GPE (Geopolitical), LOC (Location), DATE, EVENT.
 
@@ -169,7 +174,7 @@ Return JSON ONLY:
   "thought": "Internal reasoning about what information is missing.",
   "action": "search" OR "finish",
   "query": "General text keyword search (leave blank if relying only on entities)",
-  "required_entities": [{"text": "Entity Name", "label": "LABEL"}],
+  "entity_filters": [{"text": "CIA", "label": "ORG", "mode": "page"}, {"text": "Bandera", "label": "PERSON", "mode": "exclude"}],
   "file_types": []
 }""";
 
@@ -186,7 +191,9 @@ Return JSON ONLY:
           final action = decision['action'] ?? 'finish';
           final thought = decision['thought'] ?? 'No thought provided.';
           final query = decision['query'] ?? '';
-          final List<dynamic> rawEntities = decision['required_entities'] ?? [];
+          
+          // Fallback to old key just in case the LLM messes up
+          final List<dynamic> rawEntities = decision['entity_filters'] ?? decision['required_entities'] ?? [];
           final List<dynamic> rawFileTypes = decision['file_types'] ?? [];
           
           node.ollamaResult += "> Thought: $thought\n"; onUpdate();
@@ -200,12 +207,13 @@ Return JSON ONLY:
 
           node.ollamaResult += "> Action: Searching Redleaf (Query: '${query.isEmpty ? 'None' : query}', Entities: ${rawEntities.length}, Types: ${rawFileTypes.isEmpty ? 'All' : rawFileTypes.join(', ')})...\n"; onUpdate();
           
-          // --- FIX: Passed networkState ---
+          // --- THE FIX: Passed networkState and limit ---
           final searchContext = await networkState.redleafService.fetchAdvancedAgentContext(
             networkState: networkState,
             query: query,
             entities: rawEntities,
             fileTypes: rawFileTypes.map((e) => e.toString()).toList(),
+            limit: node.searchLimit,
           );
           
           if (searchContext.contains("[No results found")) {

@@ -92,20 +92,26 @@ ${upstreamContext.isEmpty ? "None" : upstreamContext.toString()}
 Task: Based on the Directive and existing knowledge, identify 2 distinct search strategies to extract hard, primary-source evidence from the Redleaf Database.
 
 CRITICAL SEARCH ENGINE RULES:
-1. The search engine uses simple keyword matching. DO NOT use boolean operators (AND, OR), parentheses, or quotes (e.g., Use "insurgent army directive", NOT "directive AND (insurgent OR army)").
-2. Do NOT provide multi-lingual queries in the same string (e.g., "директива (directive)"). Pick one language per search.
-3. Use "required_entities" EXTREMELY sparingly (0 or 1 maximum). Requiring multiple entities forces them to appear on the exact same page, which almost always returns 0 results. It is safer to leave "required_entities" empty and put the names in the "query".
+1. The search engine uses simple keyword matching. DO NOT use boolean operators (AND, OR), parentheses, or quotes.
+2. Do NOT provide multi-lingual queries in the same string. Pick one language per search.
+3. For entities, "mode" must be one of: "doc" (appears in document), "page" (appears on same page), or "exclude" (MUST NOT appear in the document).
+4. Use "exclude" to filter out known noise or unrelated topics. 
+5. You control the "limit" of documents returned (between 1 and 15). Use a higher limit (10-15) for broad overviews, and a lower limit (1-5) for targeted, highly specific facts.
 
 File types available: ["PDF", "TXT", "HTML", "SRT" (transcripts), "EML" (emails)].
 Entity labels available: PERSON, ORG, GPE (Geopolitical), LOC (Location), DATE, EVENT.
 
-CRITICAL INSTRUCTION: Do NOT include any conversational text or markdown blocks. Return ONLY valid, parseable JSON exactly matching this structure:
+CRITICAL INSTRUCTION: Return ONLY valid, parseable JSON exactly matching this structure. Use the "exclude" mode if you need to bypass a specific topic.
 {
   "searches": [
     {
-      "query": "Specific, natural language keyword search",
-      "required_entities": [{"text": "Entity Name", "label": "LABEL"}],
-      "file_types": []
+      "query": "Specific keyword search",
+      "required_entities": [
+          {"text": "Main Topic", "label": "ORG", "mode": "doc"},
+          {"text": "Irrelevant Topic", "label": "PERSON", "mode": "exclude"}
+      ],
+      "file_types": [],
+      "limit": 8
     }
   ]
 }""";
@@ -130,7 +136,7 @@ CRITICAL INSTRUCTION: Do NOT include any conversational text or markdown blocks.
     }
 
     if (searchesToForage.isEmpty) {
-        searchesToForage = [{"query": directive, "required_entities": [], "file_types": []}]; // Fallback
+        searchesToForage = [{"query": directive, "required_entities": [], "file_types": [], "limit": node.searchLimit}]; // Fallback
     }
 
     if (checkForceAnswer()) return;
@@ -145,16 +151,22 @@ CRITICAL INSTRUCTION: Do NOT include any conversational text or markdown blocks.
         final List<dynamic> rawEntities = searchConfig['required_entities'] ?? [];
         final List<dynamic> rawFileTypes = searchConfig['file_types'] ?? [];
         
-        String logDesc = "Query: '${query.isEmpty ? 'None' : query}', Entities: ${rawEntities.length}, Types: ${rawFileTypes.isEmpty ? 'All' : rawFileTypes.join(', ')}";
+        // --- NEW: Extract dynamic limit safely ---
+        int dynamicLimit = node.searchLimit;
+        if (searchConfig.containsKey('limit') && searchConfig['limit'] is int) {
+            dynamicLimit = (searchConfig['limit'] as int).clamp(1, 15);
+        }
+        
+        String logDesc = "Query: '${query.isEmpty ? 'None' : query}', Entities: ${rawEntities.length}, Types: ${rawFileTypes.isEmpty ? 'All' : rawFileTypes.join(', ')}, Limit: $dynamicLimit";
 
         node.ollamaResult += "\n> [Forager] Searching Redleaf primary sources ($logDesc)...\n"; onUpdate();
         
-        // --- FIX: Pass networkState here ---
         final searchContext = await networkState.redleafService.fetchAdvancedAgentContext(
-          networkState: networkState, // <-- THIS IS THE MISSING LINE!
+          networkState: networkState, 
           query: query,
           entities: rawEntities,
           fileTypes: rawFileTypes.map((e) => e.toString()).toList(),
+          limit: dynamicLimit, 
         );
         
         if (searchContext.contains("[No results found")) {
@@ -191,17 +203,22 @@ If nothing is relevant, return "Nothing relevant." DO NOT hallucinate facts.""";
     // --- PHASE 3: CAMPFIRE SYNTHESIS ---
     node.ollamaResult += "\n🏕️ Campfire Synthesis: Writing grounded report...\n\n"; onUpdate();
     
+    // --- FIX: Updated Synthesis Prompt to strictly enforce Wiki Council-style output ---
     final synthesisPrompt = """You are a Lead Intelligence Analyst.
 Directive: "$directive"
 
 Your team has queried the Redleaf Database and returned with the following verified data.
 Your task is to write a definitive, grounded intelligence report based ONLY on the Extracted Evidence.
 
+Write a Grounded Intelligence Report containing:
+1. **Executive Summary:** A high-level overview of the findings.
+2. **Detailed Findings:** The core analysis based ONLY on the extracted evidence. You MUST preserve and include the inline citations like [Doc X].
+3. **Suggested Deep Studies:** A bulleted list of recommended follow-up research vectors. For each, write a 1-sentence prompt that the user can feed into a 'Deep Study' agent to kickstart it.
+
 CRITICAL INSTRUCTIONS:
-1. If the Extracted Evidence is empty or states nothing was found, you MUST state exactly: "The database search yielded no relevant information for this directive." DO NOT invent narratives, sectors, anomalies, or fake documents.
-2. If evidence IS present, overwrite any assumptions in the existing Wiki knowledge with the verified facts below.
-3. You MUST include inline citations like [Doc X] when stating facts derived from the evidence. NEVER fabricate citations.
-4. Use double brackets like [[Concept Name]] to suggest links to existing or new Wiki pages.
+- If you mention existing Wiki Pages, wrap them in double brackets like [[Page Name]].
+- Format your report using clean Markdown.
+- Do NOT hallucinate data. If the evidence does not support a point, say so.
 
 EXTRACTED EVIDENCE (VERIFIED):
 ${foragedFacts.isEmpty ? "No verified facts found in the database." : foragedFacts.toString()}""";

@@ -1,4 +1,4 @@
-// --- File: lib/ui/top_bar.dart (UPDATED WITH COPY LOGS BUTTON) ---
+// --- File: lib/ui/top_bar.dart ---
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // <-- ADDED for Clipboard access
 import 'package:provider/provider.dart';
@@ -69,8 +69,8 @@ class TopBar extends StatelessWidget {
           _MenuButton(label: "Paste", onTap: () => graphState.paste()),
           const VerticalDivider(color: Colors.black, width: 20),
           
-          // --- NEW: Wiki Graph Button ---
-          _MenuButton(label: "Wiki Graph", onTap: () => _showWikiGraphDialog(context, graphState)),
+          // --- Wiki Graph Button ---
+          _MenuButton(label: "Wiki Graph", onTap: () => _showWikiGraphDialog(context, graphState, networkState)),
           
           _MenuButton(label: "About", onTap: () => _showAboutDialog(context)),
           const Spacer(),
@@ -116,8 +116,53 @@ class TopBar extends StatelessWidget {
     );
   }
 
-  // --- NEW: Wiki Graph Dialog ---
-  void _showWikiGraphDialog(BuildContext context, GraphState graphState) {
+  // --- NEW: Handle clicks on Wiki Links from the dialog ---
+  void _handleWikiLinkTap(BuildContext context, GraphState graphState, NetworkState networkState, String page) async {
+    Navigator.pop(context); // Close the dialog
+    final String safeWikiTarget = page.replaceAll('_', ' '); // Clean for search
+    
+    bool fileExists = false;
+    try {
+      final existingPages = await graphState.listWikiPages(networkState);
+      fileExists = existingPages.contains(page);
+    } catch (e) {
+      debugPrint("Error checking wiki page existence: $e");
+    }
+
+    // Try to spawn the node near the current selection, otherwise center canvas
+    Offset newPos = const Offset(kWorldSize / 2, kWorldSize / 2);
+    if (graphState.selectedNodeIds.isNotEmpty) {
+       final currentNode = graphState.nodes[graphState.selectedNodeIds.first];
+       if (currentNode != null) {
+          newPos = currentNode.position + Offset(kNodeWidth / 2 + 50, currentNode.currentHeight + 100);
+       }
+    }
+
+    if (fileExists) {
+      final content = await graphState.readWikiPage(page, networkState);
+      graphState.addNode(newPos, NodeType.wikiReader);
+      final newNodeId = graphState.selectedNodeIds.first;
+      graphState.updateWikiTitle(newNodeId, page);
+      graphState.updateNodeTitle(newNodeId, "Read: $page");
+      graphState.setNodeOllamaResult(newNodeId, content);
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Opened Wiki Reader for '$page'"))
+      );
+    } else {
+      graphState.addNode(newPos, NodeType.study);
+      final newNodeId = graphState.selectedNodeIds.first;
+      graphState.updateNodeContent(newNodeId, safeWikiTarget);
+      graphState.updateNodeTitle(newNodeId, "Study: $safeWikiTarget");
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Spawned new Deep Study for missing page: '$safeWikiTarget'"))
+      );
+    }
+  }
+
+  // --- UPDATED: Wiki Graph Dialog ---
+  void _showWikiGraphDialog(BuildContext context, GraphState graphState, NetworkState networkState) {
     // Sort pages by their NodeRank score (descending)
     final sortedPages = graphState.wikiNodeRanks.keys.toList()
       ..sort((a, b) => graphState.wikiNodeRanks[b]!.compareTo(graphState.wikiNodeRanks[a]!));
@@ -141,7 +186,7 @@ class TopBar extends StatelessWidget {
             children: [
               const Text(
                 "Pages are ranked by their 'importance' within the network using a Markov Chain (NodeRank) algorithm. "
-                "A score of 1.0 represents the most highly-connected hub in your Wiki.",
+                "Click on any page or link below to spawn a Reader node (if it exists) or a Deep Study node (if it's missing!).",
                 style: TextStyle(color: Colors.white54, fontSize: 13),
               ),
               const SizedBox(height: 20),
@@ -175,9 +220,20 @@ class TopBar extends StatelessWidget {
                                     ),
                                     const SizedBox(width: 12),
                                     Expanded(
-                                      child: Text(
-                                        page, 
-                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)
+                                      child: MouseRegion(
+                                        cursor: SystemMouseCursors.click,
+                                        child: GestureDetector(
+                                          onTap: () => _handleWikiLinkTap(ctx, graphState, networkState, page),
+                                          child: Text(
+                                            page, 
+                                            // Original visual formatting, but now clickable
+                                            style: const TextStyle(
+                                              color: Colors.white, 
+                                              fontWeight: FontWeight.bold, 
+                                              fontSize: 16,
+                                            )
+                                          ),
+                                        ),
                                       ),
                                     ),
                                     Container(
@@ -201,13 +257,26 @@ class TopBar extends StatelessWidget {
                                   Wrap(
                                     spacing: 6,
                                     runSpacing: 6,
-                                    children: outLinks.map((link) => Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFF333333),
-                                        borderRadius: BorderRadius.circular(4),
+                                    children: outLinks.map((link) => MouseRegion(
+                                      cursor: SystemMouseCursors.click,
+                                      child: GestureDetector(
+                                        onTap: () => _handleWikiLinkTap(ctx, graphState, networkState, link),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF333333),
+                                            borderRadius: BorderRadius.circular(4),
+                                          ),
+                                          child: Text(
+                                            link, 
+                                            // Original visual formatting, but now clickable
+                                            style: const TextStyle(
+                                              color: Colors.lightBlueAccent, 
+                                              fontSize: 11
+                                            )
+                                          ),
+                                        ),
                                       ),
-                                      child: Text(link, style: const TextStyle(color: Colors.lightBlueAccent, fontSize: 11)),
                                     )).toList(),
                                   )
                                 ]

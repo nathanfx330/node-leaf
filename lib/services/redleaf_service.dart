@@ -1,4 +1,4 @@
-// --- File: lib/services/redleaf_service.dart (UPDATED WITH THRESHOLD & DEBUG LOGGING) ---
+// --- File: lib/services/redleaf_service.dart ---
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -271,21 +271,37 @@ class RedleafService {
     return await fetchAdvancedFtsContext(query, 5, []);
   }
 
-  // --- REFACTORED: Advanced Search Agent Context using the wrapper and threshold ---
+  // --- REFACTORED: Advanced Search Agent Context using the wrapper and dynamic limit ---
   Future<String> fetchAdvancedAgentContext({
     required NetworkState networkState,
     required String query,
     required List<dynamic> entities,
     required List<String> fileTypes,
+    int limit = 5, // <-- NEW: Dynamic limit!
   }) async {
     if (!await _ensureAuth()) return "[Auth Error: Not connected to Redleaf]";
     
-    // --- NEW: Add URL parameter for the dynamic threshold ---
     final String urlPath = '/api/search/advanced?threshold=${networkState.semanticThreshold}';
     
-    // --- NEW: Write to the Debug Log ---
-    String logMsg = "Search -> Q: '${query.isEmpty ? '(Empty)' : query}' | Threshold: ${networkState.semanticThreshold}";
-    if (entities.isNotEmpty) logMsg += " | Ents: ${entities.length}";
+    // --- NEW: Parse the entities to log exactly what Boolean mode the Agent is using ---
+    int docEnts = 0, pageEnts = 0, excludeEnts = 0;
+    for (var e in entities) {
+      if (e is Map) {
+        final mode = e['mode'] ?? 'doc';
+        if (mode == 'exclude') excludeEnts++;
+        else if (mode == 'page') pageEnts++;
+        else docEnts++;
+      }
+    }
+    
+    String entLog = "";
+    if (docEnts > 0) entLog += "DOC:$docEnts ";
+    if (pageEnts > 0) entLog += "PAGE:$pageEnts ";
+    if (excludeEnts > 0) entLog += "NOT:$excludeEnts ";
+    
+    String logMsg = "Search -> Q: '${query.isEmpty ? '(Empty)' : query}' | Limit: $limit | Thr: ${networkState.semanticThreshold}";
+    if (entLog.isNotEmpty) logMsg += " | Ents: ${entLog.trim()}";
+    
     networkState.addAgentDebugLog(logMsg);
 
     try {
@@ -293,7 +309,7 @@ class RedleafService {
         "q": query,
         "entities": entities,
         "file_types": fileTypes,
-        "limit": 5 
+        "limit": limit // <-- NEW: Passing dynamic limit to Flask
       });
 
       if (res.statusCode == 200) {

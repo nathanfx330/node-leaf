@@ -1,4 +1,4 @@
-// --- File: lib/agents/deep_study_agent.dart (FIXED: Passed networkState to search) ---
+// --- File: lib/agents/deep_study_agent.dart ---
 import 'dart:convert';
 
 import '../constants.dart';
@@ -112,7 +112,13 @@ ${accumulatedNotes.isEmpty ? "None" : accumulatedNotes}
 Analyze the Goal, the Upstream Context, and your Notes. What information is MISSING? 
 Determine the SINGLE best next step.
 
-You have access to an Advanced Search Engine. You can filter by strict text queries, required entities that MUST be on the page, and specific file types.
+CRITICAL SEARCH ENGINE RULES:
+1. The search engine uses simple keyword matching. DO NOT use boolean operators (AND, OR), parentheses, or quotes.
+2. Do NOT provide multi-lingual queries in the same string. Pick one language per search.
+3. For entities, "mode" must be one of: "doc" (appears in document), "page" (appears on same page), or "exclude" (MUST NOT appear in the document).
+4. Use "exclude" to filter out known noise or unrelated topics.
+5. You control the "limit" of documents returned (between 1 and 15). Use a higher limit (10-15) for broad overviews, and a lower limit (1-5) for targeted, highly specific facts.
+
 File types available: ["PDF", "TXT", "HTML", "SRT" (transcripts), "EML" (emails)].
 Entity labels available: PERSON, ORG, GPE (Geopolitical), LOC (Location), DATE, EVENT.
 
@@ -120,9 +126,13 @@ Return JSON ONLY (Do not use Markdown blocks):
 {
   "thought": "Internal reasoning about what information is still missing.",
   "action": "search" OR "finish",
-  "query": "General text keyword search (leave blank if relying only on entities)",
-  "required_entities": [{"text": "Entity Name", "label": "LABEL"}],
-  "file_types": []
+  "query": "Specific, natural language keyword search",
+  "required_entities": [
+      {"text": "Main Topic", "label": "ORG", "mode": "doc"},
+      {"text": "Irrelevant Topic", "label": "PERSON", "mode": "exclude"}
+  ],
+  "file_types": [],
+  "limit": 8
 }""";
 
       try {
@@ -141,6 +151,12 @@ Return JSON ONLY (Do not use Markdown blocks):
         final List<dynamic> rawEntities = decision['required_entities'] ?? [];
         final List<dynamic> rawFileTypes = decision['file_types'] ?? [];
         
+        // --- NEW: Extract dynamic limit safely ---
+        int dynamicLimit = node.searchLimit;
+        if (decision.containsKey('limit') && decision['limit'] is int) {
+            dynamicLimit = (decision['limit'] as int).clamp(1, 15);
+        }
+        
         node.ollamaResult += "> Thought: $thought\n"; onUpdate();
         
         if (action == 'finish' || (query.isEmpty && rawEntities.isEmpty)) {
@@ -150,14 +166,15 @@ Return JSON ONLY (Do not use Markdown blocks):
         
         if (checkForceAnswer()) break;
 
-        node.ollamaResult += "> Action: Searching Redleaf (Query: '${query.isEmpty ? 'None' : query}', Entities: ${rawEntities.length}, Types: ${rawFileTypes.isEmpty ? 'All' : rawFileTypes.join(', ')})...\n"; onUpdate();
+        String logDesc = "Query: '${query.isEmpty ? 'None' : query}', Entities: ${rawEntities.length}, Types: ${rawFileTypes.isEmpty ? 'All' : rawFileTypes.join(', ')}, Limit: $dynamicLimit";
+        node.ollamaResult += "> Action: Searching Redleaf ($logDesc)...\n"; onUpdate();
         
-        // --- FIX: Pass networkState here ---
         final searchContext = await networkState.redleafService.fetchAdvancedAgentContext(
           networkState: networkState,
           query: query,
           entities: rawEntities,
           fileTypes: rawFileTypes.map((e) => e.toString()).toList(),
+          limit: dynamicLimit, 
         );
         
         if (searchContext.contains("[No results found")) {
