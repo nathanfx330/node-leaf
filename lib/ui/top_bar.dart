@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // <-- ADDED for Clipboard access
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../constants.dart';
 import '../state/network_state.dart';
@@ -70,7 +71,12 @@ class TopBar extends StatelessWidget {
           const VerticalDivider(color: Colors.black, width: 20),
           
           // --- Wiki Graph Button ---
-          _MenuButton(label: "Wiki Graph", onTap: () => _showWikiGraphDialog(context, graphState, networkState)),
+          _MenuButton(label: "Wiki Graph", onTap: () {
+            showDialog(
+              context: context,
+              builder: (ctx) => const _WikiGraphDialog(),
+            );
+          }),
           
           _MenuButton(label: "About", onTap: () => _showAboutDialog(context)),
           const Spacer(),
@@ -116,7 +122,45 @@ class TopBar extends StatelessWidget {
     );
   }
 
-  // --- NEW: Handle clicks on Wiki Links from the dialog ---
+  void _showAboutDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        contentPadding: const EdgeInsets.only(top: 32, bottom: 24, left: 24, right: 24),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children:[
+            Image.asset(
+              'assets/logo.png', 
+              height: 200,
+              errorBuilder: (context, error, stackTrace) => const Icon(Icons.account_tree, size: 100, color: kAccentColor),
+            ), 
+            const SizedBox(height: 5),
+            const Text("Node Leaf 1.5", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+            const SizedBox(height: 8),
+            const Text("The Nodal RAG companion to Redleaf Engine 2.5", textAlign: TextAlign.center, style: TextStyle(fontSize: 13, color: Colors.white70)),
+            const SizedBox(height: 16),
+            const Text("by Nathaniel Westveer", style: TextStyle(fontSize: 14, color: Colors.white70)),
+          ],
+        ),
+        actions:[TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close", style: TextStyle(color: kAccentColor)))],
+      ),
+    );
+  }
+}
+
+// --- NEW: Stateful Widget for Wiki Graph Dialog ---
+class _WikiGraphDialog extends StatefulWidget {
+  const _WikiGraphDialog();
+
+  @override
+  State<_WikiGraphDialog> createState() => _WikiGraphDialogState();
+}
+
+class _WikiGraphDialogState extends State<_WikiGraphDialog> {
+  String _searchQuery = "";
+
   void _handleWikiLinkTap(BuildContext context, GraphState graphState, NetworkState networkState, String page) async {
     Navigator.pop(context); // Close the dialog
     final String safeWikiTarget = page.replaceAll('_', ' '); // Clean for search
@@ -161,169 +205,170 @@ class TopBar extends StatelessWidget {
     }
   }
 
-  // --- UPDATED: Wiki Graph Dialog ---
-  void _showWikiGraphDialog(BuildContext context, GraphState graphState, NetworkState networkState) {
-    // Sort pages by their NodeRank score (descending)
+  @override
+  Widget build(BuildContext context) {
+    final graphState = context.watch<GraphState>();
+    final networkState = context.watch<NetworkState>();
+
+    // 1. Sort pages by their NodeRank score (descending)
     final sortedPages = graphState.wikiNodeRanks.keys.toList()
       ..sort((a, b) => graphState.wikiNodeRanks[b]!.compareTo(graphState.wikiNodeRanks[a]!));
 
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF222222),
-        title: const Row(
-          children: [
-            Icon(Icons.hub, color: Colors.amberAccent),
-            SizedBox(width: 10),
-            Text("Wiki Knowledge Graph", style: TextStyle(color: Colors.white)),
-          ],
-        ),
-        content: SizedBox(
-          width: 800,
-          height: 600,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                "Pages are ranked by their 'importance' within the network using a Markov Chain (NodeRank) algorithm. "
-                "Click on any page or link below to spawn a Reader node (if it exists) or a Deep Study node (if it's missing!).",
-                style: TextStyle(color: Colors.white54, fontSize: 13),
-              ),
-              const SizedBox(height: 20),
-              Expanded(
-                child: sortedPages.isEmpty
-                  ? const Center(child: Text("No linked pages found. Use [[Page Title]] syntax in your wiki files.", style: TextStyle(color: Colors.white54)))
-                  : ListView.builder(
-                      itemCount: sortedPages.length,
-                      itemBuilder: (context, index) {
-                        final page = sortedPages[index];
-                        final score = graphState.wikiNodeRanks[page]!;
-                        final outLinks = graphState.wikiOutgoingLinks[page] ?? [];
-                        
-                        // Calculate a color gradient based on rank
-                        final int colorValue = (score * 255).toInt();
-                        final Color rankColor = Color.fromARGB(255, 255, colorValue, 0);
+    // 2. Filter pages based on search query
+    final filteredPages = _searchQuery.isEmpty 
+        ? sortedPages 
+        : sortedPages.where((p) => p.toLowerCase().contains(_searchQuery.toLowerCase())).toList();
 
-                        return Card(
-                          color: const Color(0xFF1A1A1A),
-                          margin: const EdgeInsets.only(bottom: 8),
-                          child: Padding(
-                            padding: const EdgeInsets.all(12.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Text(
-                                      "#${index + 1}", 
-                                      style: const TextStyle(color: Colors.white54, fontWeight: FontWeight.bold, fontSize: 16)
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: MouseRegion(
-                                        cursor: SystemMouseCursors.click,
-                                        child: GestureDetector(
-                                          onTap: () => _handleWikiLinkTap(ctx, graphState, networkState, page),
-                                          child: Text(
-                                            page, 
-                                            // Original visual formatting, but now clickable
-                                            style: const TextStyle(
-                                              color: Colors.white, 
-                                              fontWeight: FontWeight.bold, 
-                                              fontSize: 16,
-                                            )
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                      decoration: BoxDecoration(
-                                        color: rankColor.withOpacity(0.2),
-                                        borderRadius: BorderRadius.circular(12),
-                                        border: Border.all(color: rankColor)
-                                      ),
-                                      child: Text(
-                                        "Score: ${score.toStringAsFixed(3)}",
-                                        style: TextStyle(color: rankColor, fontWeight: FontWeight.bold, fontSize: 12)
-                                      ),
-                                    )
-                                  ],
-                                ),
-                                if (outLinks.isNotEmpty) ...[
-                                  const SizedBox(height: 8),
-                                  const Text("Links to:", style: TextStyle(color: Colors.white54, fontSize: 12)),
-                                  const SizedBox(height: 4),
-                                  Wrap(
-                                    spacing: 6,
-                                    runSpacing: 6,
-                                    children: outLinks.map((link) => MouseRegion(
-                                      cursor: SystemMouseCursors.click,
-                                      child: GestureDetector(
-                                        onTap: () => _handleWikiLinkTap(ctx, graphState, networkState, link),
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFF333333),
-                                            borderRadius: BorderRadius.circular(4),
-                                          ),
-                                          child: Text(
-                                            link, 
-                                            // Original visual formatting, but now clickable
-                                            style: const TextStyle(
-                                              color: Colors.lightBlueAccent, 
-                                              fontSize: 11
-                                            )
-                                          ),
-                                        ),
-                                      ),
-                                    )).toList(),
-                                  )
-                                ]
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-              )
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx), 
-            child: const Text("Close", style: TextStyle(color: kAccentColor))
-          )
+    return AlertDialog(
+      backgroundColor: const Color(0xFF222222),
+      title: const Row(
+        children: [
+          Icon(Icons.hub, color: Colors.amberAccent),
+          SizedBox(width: 10),
+          Text("Wiki Knowledge Graph", style: TextStyle(color: Colors.white)),
         ],
       ),
-    );
-  }
+      content: SizedBox(
+        width: 800,
+        height: 600,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Pages are ranked by their 'importance' within the network using a Markov Chain (NodeRank) algorithm. "
+              "Click on any page or link below to spawn a Reader node (if it exists) or a Deep Study node (if it's missing!).",
+              style: TextStyle(color: Colors.white54, fontSize: 13),
+            ),
+            const SizedBox(height: 15),
+            
+            // --- SEARCH FILTER INPUT ---
+            TextField(
+              autofocus: true,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                hintText: "Filter pages by title...",
+                hintStyle: const TextStyle(color: Colors.white54),
+                filled: true,
+                fillColor: const Color(0xFF111111),
+                prefixIcon: const Icon(Icons.search, color: Colors.white54),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding: const EdgeInsets.symmetric(vertical: 0),
+              ),
+              onChanged: (val) {
+                setState(() {
+                  _searchQuery = val;
+                });
+              },
+            ),
+            const SizedBox(height: 15),
 
-  void _showAboutDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        contentPadding: const EdgeInsets.only(top: 32, bottom: 24, left: 24, right: 24),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children:[
-            Image.asset(
-              'assets/logo.png', 
-              height: 200,
-              errorBuilder: (context, error, stackTrace) => const Icon(Icons.account_tree, size: 100, color: kAccentColor),
-            ), 
-            const SizedBox(height: 5),
-            const Text("Node Leaf 1.5", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
-            const SizedBox(height: 8),
-            const Text("The Nodal RAG companion to Redleaf Engine 2.5", textAlign: TextAlign.center, style: TextStyle(fontSize: 13, color: Colors.white70)),
-            const SizedBox(height: 16),
-            const Text("by Nathaniel Westveer", style: TextStyle(fontSize: 14, color: Colors.white70)),
+            Expanded(
+              child: filteredPages.isEmpty
+                ? Center(child: Text(_searchQuery.isEmpty ? "No linked pages found. Use [[Page Title]] syntax in your wiki files." : "No pages match your search.", style: const TextStyle(color: Colors.white54)))
+                : ListView.builder(
+                    itemCount: filteredPages.length,
+                    itemBuilder: (context, index) {
+                      final page = filteredPages[index];
+                      final score = graphState.wikiNodeRanks[page]!;
+                      final outLinks = graphState.wikiOutgoingLinks[page] ?? [];
+                      
+                      // Calculate a color gradient based on rank
+                      final int colorValue = (score * 255).toInt();
+                      final Color rankColor = Color.fromARGB(255, 255, colorValue, 0);
+
+                      return Card(
+                        color: const Color(0xFF1A1A1A),
+                        margin: const EdgeInsets.only(bottom: 8),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Text(
+                                    "#${sortedPages.indexOf(page) + 1}", // Maintain original absolute rank number
+                                    style: const TextStyle(color: Colors.white54, fontWeight: FontWeight.bold, fontSize: 16)
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: MouseRegion(
+                                      cursor: SystemMouseCursors.click,
+                                      child: GestureDetector(
+                                        onTap: () => _handleWikiLinkTap(context, graphState, networkState, page),
+                                        child: Text(
+                                          page, 
+                                          style: const TextStyle(
+                                            color: Colors.white, 
+                                            fontWeight: FontWeight.bold, 
+                                            fontSize: 16,
+                                          )
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: rankColor.withOpacity(0.2),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(color: rankColor)
+                                    ),
+                                    child: Text(
+                                      "Score: ${score.toStringAsFixed(3)}",
+                                      style: TextStyle(color: rankColor, fontWeight: FontWeight.bold, fontSize: 12)
+                                    ),
+                                  )
+                                ],
+                              ),
+                              if (outLinks.isNotEmpty) ...[
+                                const SizedBox(height: 8),
+                                const Text("Links to:", style: TextStyle(color: Colors.white54, fontSize: 12)),
+                                const SizedBox(height: 4),
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 6,
+                                  children: outLinks.map((link) => MouseRegion(
+                                    cursor: SystemMouseCursors.click,
+                                    child: GestureDetector(
+                                      onTap: () => _handleWikiLinkTap(context, graphState, networkState, link),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF333333),
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          link, 
+                                          style: const TextStyle(
+                                            color: Colors.lightBlueAccent, 
+                                            fontSize: 11
+                                          )
+                                        ),
+                                      ),
+                                    ),
+                                  )).toList(),
+                                )
+                              ]
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+            )
           ],
         ),
-        actions:[TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close", style: TextStyle(color: kAccentColor)))],
       ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context), 
+          child: const Text("Close", style: TextStyle(color: kAccentColor))
+        )
+      ],
     );
   }
 }

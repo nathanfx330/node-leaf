@@ -371,6 +371,7 @@ $debateTranscript""";
 
     final currentDate = DateTime.now().toString().split('.')[0];
     
+    // --- FIX: Stricter bracket rules added here to prevent mixing [Doc] and [[Wiki]] ---
     final synthesisPrompt = isAuditMode 
     ? """You are the Director of the Wiki Council. 
 You have overseen a debate about the Target Wiki Page.
@@ -379,8 +380,6 @@ Your task is twofold:
 1. Write a brief "Director's Summary" outlining the flaws found in the original document based on the debate and its position in the Wiki Graph.
 2. Provide a **complete, proposed rewrite** of the Target Wiki Page that incorporates the best suggestions from the debate and the upstream context. 
 
-CRITICAL: You MUST use double brackets like [[Page Name]] to link concepts to other pages, especially if the debate suggested adding links.
-Include inline citations like [Doc X] if you use facts from the context.
 $directiveContext
 
 TARGET WIKI PAGE (ORIGINAL):
@@ -390,7 +389,10 @@ WIKI KNOWLEDGE GRAPH DATA:
 ${wikiGraphContext.toString()}
 
 COUNCIL DEBATE TRANSCRIPT:
-$debateTranscript"""
+$debateTranscript
+
+FINAL EXECUTION COMMAND:
+You MUST follow the CRITICAL BRACKET AND LINKING RULES exactly. Do not confuse [[Wiki Links]] with [Doc Citations]."""
     : """You are the Director of the Wiki Council. 
 You must synthesize the Debate Transcript into a final, actionable report.
 
@@ -398,18 +400,30 @@ Write a Council Audit Report containing:
 1. **Missing Connections:** A synthesized summary of the ontological gaps identified by the experts.
 2. **Suggested New Pages:** A bulleted list of recommended new Wiki pages to create based on the debate. For each, write a 1-sentence prompt that the user can feed into a 'Deep Study' agent to kickstart it. 
 
-CRITICAL: Use double brackets like [[Page Name]] when referencing existing Wiki Hubs or proposing new ones.
 $directiveContext
 
 WIKI KNOWLEDGE GRAPH DATA:
 ${wikiGraphContext.toString()}
 
 DEBATE TRANSCRIPT:
-$debateTranscript""";
+$debateTranscript
+
+FINAL EXECUTION COMMAND:
+You MUST follow the CRITICAL BRACKET AND LINKING RULES exactly. Do not confuse [[Wiki Links]] with [Doc Citations].""";
+
+    final String bracketRules = """
+CRITICAL BRACKET AND LINKING RULES:
+1. WIKI LINKS: You MUST use double brackets [[ ]] to link to other concepts or pages. NEVER use standard markdown links [text](url) or bolding **text** to indicate a link.
+2. CITATIONS: You MUST use SINGLE brackets for document citations like [Doc 12]. Never state a fact without carrying over its corresponding [Doc X] tag.
+3. CRITICAL SYNTAX DISTINCTION:
+   - WIKI LINKS use DOUBLE brackets: [[Concept Name]]
+   - CITATIONS use SINGLE brackets: [Doc 14]
+   - CORRECT EXAMPLE: The [[Soviet Union]] launched [[Sputnik 1]] in 1957 [Doc 14].
+   - INCORRECT EXAMPLE: The [Soviet Union] launched Sputnik 1 in 1957 [[Doc 14]]. (Wrong bracket types!)""";
 
     String systemInstruction = isAuditMode 
-    ? "CURRENT SYSTEM TIME: $currentDate\n\nYou are the Director of the Wiki Council. First summarize the debate, then output a full Markdown rewrite of the page under the heading '### Proposed Rewrite'. DO NOT use special tags, control tokens, or signatures. Output only the requested text."
-    : "CURRENT SYSTEM TIME: $currentDate\n\nYou are the Director of the Wiki Council. You must synthesize the debate. DO NOT use special tags, control tokens, or signatures. Output only the requested text.";
+    ? "CURRENT SYSTEM TIME: $currentDate\n\nYou are the Director of the Wiki Council. First summarize the debate, then output a full Markdown rewrite of the page under the heading '### Proposed Rewrite'. DO NOT use special tags, control tokens, or signatures. Output only the requested text.\n\n$bracketRules"
+    : "CURRENT SYSTEM TIME: $currentDate\n\nYou are the Director of the Wiki Council. You must synthesize the debate. DO NOT use special tags, control tokens, or signatures. Output only the requested text.\n\n$bracketRules";
 
     try {
       final stream = OllamaService.generateTextStream(
