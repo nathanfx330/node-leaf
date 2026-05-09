@@ -11,9 +11,23 @@ class ResearchPartyAgent {
   
   static Map<String, dynamic> _parseAgentJSON(String response) {
     try {
-      String clean = response.replaceAll('```json', '').replaceAll('```', '').trim();
+      // 1. Strip markdown formatting just in case it ignored the prompt
+      String clean = response.replaceAll(RegExp(r'```(?:json)?'), '').trim();
+      
+      // 2. Extract just the JSON block if the LLM added conversational filler before or after
+      final int startIndex = clean.indexOf('{');
+      final int endIndex = clean.lastIndexOf('}');
+      if (startIndex != -1 && endIndex != -1 && endIndex >= startIndex) {
+          clean = clean.substring(startIndex, endIndex + 1);
+      }
+
+      // 3. Fix trailing commas before closing braces/brackets (Extremely common LLM mistake)
+      clean = clean.replaceAll(RegExp(r',\s*\}'), '}');
+      clean = clean.replaceAll(RegExp(r',\s*\]'), ']');
+      
       return jsonDecode(clean);
     } catch (e) {
+      // If it still fails to parse, return an empty array so the agent uses the fallback query
       return {"searches": []};
     }
   }
@@ -26,19 +40,19 @@ class ResearchPartyAgent {
     required bool Function() checkForceAnswer,
     required Function() onUpdate,
   }) async {
+    // Keep UI fun and engaging
     node.ollamaResult = "🏕️ Research Party: Packing gear and reviewing maps...\n";
     onUpdate();
 
     StringBuffer upstreamContext = StringBuffer();
     String directive = node.content.isNotEmpty ? node.content : "Explore the database for new insights.";
 
-    // 1. Gather Upstream Context (Same as others)
+    // 1. Gather Upstream Context
     for (var n in sequence) {
-      // --- FIX: Added merge to the ignore list ---
       if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study || n.type == NodeType.summarize || n.type == NodeType.wikiWriter || n.type == NodeType.council || n.type == NodeType.researchParty || n.type == NodeType.merge) continue;
       
       if (n.type == NodeType.wikiReader && n.wikiTitle.isNotEmpty) {
-        upstreamContext.writeln("\n>>> UNVERIFIED MAP (WIKI PAGE): '${n.wikiTitle}' <<<");
+        upstreamContext.writeln("\n>>> UNVERIFIED WIKI PAGE: '${n.wikiTitle}' <<<");
         upstreamContext.writeln(await graphState.readWikiPage(n.wikiTitle, networkState));
         upstreamContext.writeln(">>> END WIKI PAGE <<<\n");
         continue;
@@ -53,11 +67,11 @@ class ResearchPartyAgent {
       }
     }
 
-    // 2. Fetch the Wiki Knowledge Graph (to show what is known vs unknown)
+    // 2. Fetch the Wiki Knowledge Graph
     StringBuffer wikiGraphContext = StringBuffer();
     final sortedPages = graphState.wikiNodeRanks.keys.toList()
       ..sort((a, b) => graphState.wikiNodeRanks[b]!.compareTo(graphState.wikiNodeRanks[a]!));
-    wikiGraphContext.writeln("KNOWN TERRITORY (Treat as unverified rumors / rough maps):");
+    wikiGraphContext.writeln("EXISTING WIKI NETWORK (Topics currently documented):");
     for (int i = 0; i < sortedPages.length && i < 10; i++) {
       wikiGraphContext.writeln("- ${sortedPages[i]}");
     }
@@ -65,26 +79,31 @@ class ResearchPartyAgent {
     // --- PHASE 1: THE SCOUT ---
     node.ollamaResult += "\n> [Scout] Surveying the territory based on Directive: '$directive'\n"; onUpdate();
 
-    final scoutPrompt = """You are the Scout for a Research Party.
+    // LLM Prompt: Strict and sterile
+    final scoutPrompt = """You are a Lead Data Strategist.
 Your Directive: "$directive"
 
-KNOWN TERRITORY (Treat as unverified rumors or outdated maps):
+EXISTING WIKI NETWORK:
 ${wikiGraphContext.toString()}
 
 UPSTREAM CONTEXT:
 ${upstreamContext.isEmpty ? "None" : upstreamContext.toString()}
 
-Task: Based on the Directive and what is currently known, identify 2 specific, distinct search strategies to forage for hard, primary-source evidence in the Redleaf Database.
+Task: Based on the Directive and existing knowledge, identify 2 distinct search strategies to extract hard, primary-source evidence from the Redleaf Database.
 
-You have access to an Advanced Search Engine. You can filter by strict text queries, required entities that MUST be on the page, and specific file types.
+CRITICAL SEARCH ENGINE RULES:
+1. The search engine uses simple keyword matching. DO NOT use boolean operators (AND, OR), parentheses, or quotes (e.g., Use "insurgent army directive", NOT "directive AND (insurgent OR army)").
+2. Do NOT provide multi-lingual queries in the same string (e.g., "директива (directive)"). Pick one language per search.
+3. Use "required_entities" EXTREMELY sparingly (0 or 1 maximum). Requiring multiple entities forces them to appear on the exact same page, which almost always returns 0 results. It is safer to leave "required_entities" empty and put the names in the "query".
+
 File types available: ["PDF", "TXT", "HTML", "SRT" (transcripts), "EML" (emails)].
 Entity labels available: PERSON, ORG, GPE (Geopolitical), LOC (Location), DATE, EVENT.
 
-Return JSON ONLY:
+CRITICAL INSTRUCTION: Do NOT include any conversational text or markdown blocks. Return ONLY valid, parseable JSON exactly matching this structure:
 {
   "searches": [
     {
-      "query": "Specific text keyword search (leave blank if relying only on entities)",
+      "query": "Specific, natural language keyword search",
       "required_entities": [{"text": "Entity Name", "label": "LABEL"}],
       "file_types": []
     }
@@ -103,7 +122,6 @@ Return JSON ONLY:
       if (scoutJson['searches'] is List) {
         searchesToForage = List<Map<String, dynamic>>.from(scoutJson['searches']);
       } else if (scoutJson['topics'] is List) {
-        // Fallback in case the LLM hallucinates the older format
         searchesToForage = (scoutJson['topics'] as List).map((t) => {"query": t.toString()}).toList();
       }
     } catch (e) {
@@ -131,8 +149,9 @@ Return JSON ONLY:
 
         node.ollamaResult += "\n> [Forager] Searching Redleaf primary sources ($logDesc)...\n"; onUpdate();
         
-        // --- NEW: Using Advanced Search API ---
+        // --- FIX: Pass networkState here ---
         final searchContext = await networkState.redleafService.fetchAdvancedAgentContext(
+          networkState: networkState, // <-- THIS IS THE MISSING LINE!
           query: query,
           entities: rawEntities,
           fileTypes: rawFileTypes.map((e) => e.toString()).toList(),
@@ -144,14 +163,14 @@ Return JSON ONLY:
         }
 
         node.ollamaResult += "> [Forager] Extracting verified facts...\n"; onUpdate();
-        final factPrompt = """You are a Forager. Extract ONLY verified facts, numbers, and direct primary evidence answering this context parameter: "$logDesc".
+        final factPrompt = """You are a strict Data Extractor. Extract ONLY verified facts, numbers, and direct primary evidence answering this context parameter: "$logDesc".
 Text to Analyze:
 $searchContext
 
-FORAGING TASK: 
+EXTRACTION TASK: 
 1. Extract specific facts. 
 2. You MUST preserve the [Doc X] citations. 
-If nothing is relevant, return "Nothing relevant." """;
+If nothing is relevant, return "Nothing relevant." DO NOT hallucinate facts.""";
 
         try {
           final extractedNotes = await OllamaService.generateText(
@@ -172,21 +191,22 @@ If nothing is relevant, return "Nothing relevant." """;
     // --- PHASE 3: CAMPFIRE SYNTHESIS ---
     node.ollamaResult += "\n🏕️ Campfire Synthesis: Writing grounded report...\n\n"; onUpdate();
     
-    final synthesisPrompt = """You are the Chronicler of the Research Party.
+    final synthesisPrompt = """You are a Lead Intelligence Analyst.
 Directive: "$directive"
 
-Your party has returned with hard facts verified directly from the Redleaf Database.
-Your task is to write a definitive, grounded intelligence report based ONLY on the Foraged Evidence.
+Your team has queried the Redleaf Database and returned with the following verified data.
+Your task is to write a definitive, grounded intelligence report based ONLY on the Extracted Evidence.
 
 CRITICAL INSTRUCTIONS:
-1. Treat any existing Wiki knowledge as unverified rumors or outdated maps. Overwrite any assumptions with the verified facts below.
-2. You MUST include inline citations like [Doc X] when stating facts derived from the foraging.
-3. Use double brackets like [[Concept Name]] to suggest links to existing or new Wiki pages.
+1. If the Extracted Evidence is empty or states nothing was found, you MUST state exactly: "The database search yielded no relevant information for this directive." DO NOT invent narratives, sectors, anomalies, or fake documents.
+2. If evidence IS present, overwrite any assumptions in the existing Wiki knowledge with the verified facts below.
+3. You MUST include inline citations like [Doc X] when stating facts derived from the evidence. NEVER fabricate citations.
+4. Use double brackets like [[Concept Name]] to suggest links to existing or new Wiki pages.
 
-FORAGED EVIDENCE (VERIFIED):
-${foragedFacts.isEmpty ? "No verified facts found. Report that the territory is barren." : foragedFacts.toString()}""";
+EXTRACTED EVIDENCE (VERIFIED):
+${foragedFacts.isEmpty ? "No verified facts found in the database." : foragedFacts.toString()}""";
 
-    String systemInstruction = "CURRENT SYSTEM TIME: ${DateTime.now()}\n\nYou are a factual, expedition reporting agent.";
+    String systemInstruction = "CURRENT SYSTEM TIME: ${DateTime.now()}\n\nYou are a strict, factual intelligence analyst. Do not use creative metaphors.";
 
     try {
       final stream = OllamaService.generateTextStream(

@@ -1,10 +1,12 @@
-// --- File: lib/services/redleaf_service.dart ---
+// --- File: lib/services/redleaf_service.dart (UPDATED WITH THRESHOLD & DEBUG LOGGING) ---
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:html/parser.dart' show parse;
 
 import '../models/node_models.dart';
+// We need access to NetworkState to read the threshold and push logs
+import '../state/network_state.dart'; 
 
 class RedleafService {
   String apiUrl = "http://127.0.0.1:5000";
@@ -96,6 +98,34 @@ class RedleafService {
       throw const FormatException("Received HTML instead of JSON. Authentication likely failed or expired.");
     }
     return jsonDecode(res.body);
+  }
+
+  Future<http.Response> _postWithRetry(String urlPath, Map<String, dynamic> body) async {
+    var res = await http.post(
+      Uri.parse('$apiUrl$urlPath'),
+      headers: {
+        'Cookie': _cookie,
+        'Content-Type': 'application/json',
+        'X-CSRFToken': _csrfToken,
+      },
+      body: jsonEncode(body),
+    );
+
+    if (res.statusCode == 400) {
+      debugPrint("400 Bad Request caught during POST. Refreshing CSRF token and retrying...");
+      await _refreshCsrfToken();
+      
+      res = await http.post(
+        Uri.parse('$apiUrl$urlPath'),
+        headers: {
+          'Cookie': _cookie,
+          'Content-Type': 'application/json',
+          'X-CSRFToken': _csrfToken,
+        },
+        body: jsonEncode(body),
+      );
+    }
+    return res;
   }
 
   Future<String?> fetchInstanceId() async {
@@ -241,57 +271,43 @@ class RedleafService {
     return await fetchAdvancedFtsContext(query, 5, []);
   }
 
-  // --- NEW: Advanced Search Agent Context Method with Self-Healing CSRF ---
+  // --- REFACTORED: Advanced Search Agent Context using the wrapper and threshold ---
   Future<String> fetchAdvancedAgentContext({
+    required NetworkState networkState,
     required String query,
     required List<dynamic> entities,
     required List<String> fileTypes,
   }) async {
     if (!await _ensureAuth()) return "[Auth Error: Not connected to Redleaf]";
+    
+    // --- NEW: Add URL parameter for the dynamic threshold ---
+    final String urlPath = '/api/search/advanced?threshold=${networkState.semanticThreshold}';
+    
+    // --- NEW: Write to the Debug Log ---
+    String logMsg = "Search -> Q: '${query.isEmpty ? '(Empty)' : query}' | Threshold: ${networkState.semanticThreshold}";
+    if (entities.isNotEmpty) logMsg += " | Ents: ${entities.length}";
+    networkState.addAgentDebugLog(logMsg);
+
     try {
-      final requestBody = jsonEncode({
+      final res = await _postWithRetry(urlPath, {
         "q": query,
         "entities": entities,
         "file_types": fileTypes,
         "limit": 5 
       });
 
-      var res = await http.post(
-        Uri.parse('$apiUrl/api/search/advanced'),
-        headers: {
-          'Cookie': _cookie,
-          'Content-Type': 'application/json',
-          'X-CSRFToken': _csrfToken, 
-        },
-        body: requestBody,
-      );
-
-      // Self-Healing CSRF Loop
-      if (res.statusCode == 400) {
-        debugPrint("400 Bad Request caught. Refreshing CSRF token and retrying...");
-        await _refreshCsrfToken();
-        
-        res = await http.post(
-          Uri.parse('$apiUrl/api/search/advanced'),
-          headers: {
-            'Cookie': _cookie,
-            'Content-Type': 'application/json',
-            'X-CSRFToken': _csrfToken, 
-          },
-          body: requestBody,
-        );
-      }
-
       if (res.statusCode == 200) {
         final List<dynamic> data = _safeJsonDecode(res);
         if (data.isEmpty) {
+          networkState.addAgentDebugLog("Result -> 0 docs found.");
           return "[No results found for this specific query and filter combination.]";
         }
+        
+        networkState.addAgentDebugLog("Result -> Found ${data.length} docs.");
         
         StringBuffer sb = StringBuffer();
         sb.writeln("--- ADVANCED SEARCH RESULTS ---");
         for (var item in data) {
-          // --- MODIFIED: Inject metadata if available ---
           String meta = item['metadata_str'] ?? "";
           String metaTag = meta.isNotEmpty ? " | METADATA: $meta" : "";
           
@@ -300,9 +316,11 @@ class RedleafService {
         sb.writeln("-------------------------------");
         return sb.toString();
       } else {
+        networkState.addAgentDebugLog("Error -> HTTP ${res.statusCode}");
         debugPrint("Advanced Agent Search returned ${res.statusCode}: ${res.body}");
       }
     } catch (e) {
+      networkState.addAgentDebugLog("Error -> Connection Failed.");
       debugPrint("Advanced Agent Search error: $e");
     }
     return "[Error fetching advanced search results]";
@@ -379,25 +397,21 @@ class RedleafService {
           String text = data['text'] ?? '';
           if (text.length > 4000) text = "${text.substring(0, 4000)}\n\n... [Document Truncated for AI Context] ...";
           
-          // --- NEW: Grab the metadata ---
           String meta = data['metadata_str'] ?? "";
           String metaTag = meta.isNotEmpty ? " | METADATA: $meta" : "";
           
           StringBuffer finalOutput = StringBuffer();
           finalOutput.writeln("[Redleaf Raw Text for Document #$docId$metaTag${startPage != null ? ' (Pages $startPage-$endPage)' : ''}]:\n$text");
 
-          // --- FIX: ADDED DOCUMENT BRIEF (OLLAMA PROMPT) INJECTION ---
           if (node.ollamaPrompt.isNotEmpty) {
             finalOutput.writeln("\n\n>>> USER'S DOCUMENT BRIEF / READING INSTRUCTIONS <<<");
             finalOutput.writeln(node.ollamaPrompt);
             finalOutput.writeln(">>> END BRIEF <<<\n");
           }
 
-          // --- FIX: ADDED ENTITY PILL CONTEXT INJECTION ---
           if (node.redleafPills.isNotEmpty) {
              finalOutput.writeln("\n\n>>> KEY ENTITIES TO TRACK IN THIS DOCUMENT <<<");
              for (var pill in node.redleafPills) {
-               // We fetch the context for the pill so the AI has background knowledge on what this entity actually is.
                finalOutput.writeln(await fetchContextForPill(pill));
              }
              finalOutput.writeln(">>> END ENTITY TRACKING <<<\n");
@@ -443,7 +457,6 @@ class RedleafService {
     return [];
   }
   
-  // --- NEW: Fetch Metadata string for UI ---
   Future<String?> fetchDocumentMetadataString(String docIdStr) async {
     if (!await _ensureAuth()) return null;
     
@@ -562,29 +575,7 @@ class RedleafService {
     if (!await _ensureAuth()) return null;
 
     try {
-      var createRes = await http.post(
-        Uri.parse('$apiUrl/api/synthesis/reports'),
-        headers: {
-          'Cookie': _cookie,
-          'Content-Type': 'application/json',
-          'X-CSRFToken': _csrfToken, 
-        },
-        body: jsonEncode({'title': title})
-      );
-      
-      // Self-Healing CSRF Loop for Export
-      if (createRes.statusCode == 400) {
-        await _refreshCsrfToken();
-        createRes = await http.post(
-          Uri.parse('$apiUrl/api/synthesis/reports'),
-          headers: {
-            'Cookie': _cookie,
-            'Content-Type': 'application/json',
-            'X-CSRFToken': _csrfToken, 
-          },
-          body: jsonEncode({'title': title})
-        );
-      }
+      final createRes = await _postWithRetry('/api/synthesis/reports', {'title': title});
       
       if (createRes.statusCode != 201 && createRes.statusCode != 200) {
         debugPrint("Failed to create Synthesis report: ${createRes.body}");
@@ -611,29 +602,7 @@ class RedleafService {
         "content": contentBlocks
       };
 
-      var saveRes = await http.post(
-        Uri.parse('$apiUrl/api/synthesis/$reportId/content'),
-        headers: {
-          'Cookie': _cookie,
-          'Content-Type': 'application/json',
-          'X-CSRFToken': _csrfToken,
-        },
-        body: jsonEncode(tiptapJson)
-      );
-      
-      // Self-Healing CSRF Loop for Saving Content
-      if (saveRes.statusCode == 400) {
-        await _refreshCsrfToken();
-        saveRes = await http.post(
-          Uri.parse('$apiUrl/api/synthesis/$reportId/content'),
-          headers: {
-            'Cookie': _cookie,
-            'Content-Type': 'application/json',
-            'X-CSRFToken': _csrfToken,
-          },
-          body: jsonEncode(tiptapJson)
-        );
-      }
+      final saveRes = await _postWithRetry('/api/synthesis/$reportId/content', tiptapJson);
 
       if (saveRes.statusCode == 200) {
         return '$apiUrl/synthesis/report/$reportId'; 

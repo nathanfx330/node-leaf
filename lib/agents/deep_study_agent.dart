@@ -1,4 +1,4 @@
-// --- File: lib/agents/deep_study_agent.dart ---
+// --- File: lib/agents/deep_study_agent.dart (FIXED: Passed networkState to search) ---
 import 'dart:convert';
 
 import '../constants.dart';
@@ -11,7 +11,9 @@ class DeepStudyAgent {
   
   static Map<String, dynamic> _parseAgentJSON(String response) {
     try {
-      String clean = response.replaceAll('```json', '').replaceAll('```', '').trim();
+      String clean = response.replaceAll(RegExp(r'```(?:json)?'), '').trim();
+      clean = clean.replaceAll(RegExp(r',\s*\}'), '}');
+      clean = clean.replaceAll(RegExp(r',\s*\]'), ']');
       return jsonDecode(clean);
     } catch (e) {
       return {"action": "finish", "thought": "Failed to parse JSON decision.", "query": ""};
@@ -150,8 +152,9 @@ Return JSON ONLY (Do not use Markdown blocks):
 
         node.ollamaResult += "> Action: Searching Redleaf (Query: '${query.isEmpty ? 'None' : query}', Entities: ${rawEntities.length}, Types: ${rawFileTypes.isEmpty ? 'All' : rawFileTypes.join(', ')})...\n"; onUpdate();
         
-        // --- NEW: Using Advanced Search API ---
+        // --- FIX: Pass networkState here ---
         final searchContext = await networkState.redleafService.fetchAdvancedAgentContext(
+          networkState: networkState,
           query: query,
           entities: rawEntities,
           fileTypes: rawFileTypes.map((e) => e.toString()).toList(),

@@ -1,4 +1,4 @@
-// --- File: lib/agents/chat_agent.dart ---
+// --- File: lib/agents/chat_agent.dart (FIXED: Passed networkState to search) ---
 import 'dart:convert';
 
 import '../constants.dart';
@@ -10,7 +10,9 @@ import '../services/ollama_service.dart';
 class ChatAgent {
   static Map<String, dynamic> _parseAgentJSON(String response) {
     try {
-      String clean = response.replaceAll('```json', '').replaceAll('```', '').trim();
+      String clean = response.replaceAll(RegExp(r'```(?:json)?'), '').trim();
+      clean = clean.replaceAll(RegExp(r',\s*\}'), '}');
+      clean = clean.replaceAll(RegExp(r',\s*\]'), ']');
       return jsonDecode(clean);
     } catch (e) {
       return {"action": "finish", "thought": "Failed to parse JSON decision.", "query": ""};
@@ -33,7 +35,7 @@ class ChatAgent {
     
     String systemInstructions = node.ollamaPrompt.isNotEmpty ? node.ollamaPrompt : "You are a helpful research assistant.";
 
-    // --- FIX: Extremely strict constraints on the Chat Agent to prevent the "20 Questions" bug ---
+    // --- Strict constraints on the Chat Agent to prevent the "20 Questions" bug ---
     if (node.type == NodeType.wikiWriter) {
       systemInstructions = """You are an Editorial Planner helping the user prepare to rewrite a Wiki page.
 Discuss the plan, answer questions using the provided context, and confirm the changes to be made. 
@@ -50,7 +52,6 @@ BEHAVIORAL CONSTRAINTS:
     } else if (node.ollamaNoBacktalk) {
       systemInstructions += "\n\nYou are a strict, analytical research agent. You MUST base your answers entirely on the provided REDLEAF CONTEXT. You MUST include inline citations exactly like [Doc 12] when stating facts derived from the context. Do not use conversational filler or backtalk.";
     }
-    // --- END FIX ---
 
     String customPersona = "";
 
@@ -135,7 +136,6 @@ BEHAVIORAL CONSTRAINTS:
         contextBuffer.writeln(">>> END ATTACHED ENTITIES <<<\n");
       }
     }
-    // --- END NEW ---
 
     // 2. Autonomous Research (ReAct Loop tailored for Chat)
     if (node.enableAutonomousResearch && networkState.redleafService.isLoggedIn) {
@@ -192,8 +192,9 @@ Return JSON ONLY:
           node.chatHistory.last["content"] = "🤖 Agent: Searching Redleaf (Query: '${query.isEmpty ? 'None' : query}', Entities: ${rawEntities.length}, Types: ${rawFileTypes.isEmpty ? 'All' : rawFileTypes.join(', ')})..."; 
           onUpdate();
           
-          // --- NEW: Using Advanced Search API ---
+          // --- FIX: Passed networkState ---
           final searchContext = await networkState.redleafService.fetchAdvancedAgentContext(
+            networkState: networkState,
             query: query,
             entities: rawEntities,
             fileTypes: rawFileTypes.map((e) => e.toString()).toList(),

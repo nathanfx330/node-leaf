@@ -1,5 +1,6 @@
-// --- File: lib/ui/top_bar.dart ---
+// --- File: lib/ui/top_bar.dart (UPDATED WITH COPY LOGS BUTTON) ---
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // <-- ADDED for Clipboard access
 import 'package:provider/provider.dart';
 
 import '../constants.dart';
@@ -93,7 +94,22 @@ class TopBar extends StatelessWidget {
           ),
           
           const SizedBox(width: 10),
-          IconButton(icon: const Icon(Icons.settings, size: 18), tooltip: "Settings", onPressed: () => _showSettingsDialog(context, networkState, graphState)),
+          IconButton(
+            icon: const Icon(Icons.settings, size: 18), 
+            tooltip: "Settings", 
+            onPressed: () {
+              showDialog(
+                context: context,
+                builder: (ctx) => MultiProvider(
+                  providers: [
+                    ChangeNotifierProvider.value(value: networkState),
+                    ChangeNotifierProvider.value(value: graphState),
+                  ],
+                  child: const _SettingsDialog(),
+                ),
+              );
+            }
+          ),
           IconButton(icon: const Icon(Icons.delete, size: 18), onPressed: () => graphState.deleteSelected(), tooltip: "Delete Selected"),
         ],
       ),
@@ -241,167 +257,352 @@ class TopBar extends StatelessWidget {
       ),
     );
   }
+}
 
-  void _showSettingsDialog(BuildContext context, NetworkState networkState, GraphState graphState) {
-    final apiCtrl = TextEditingController(text: networkState.redleafService.apiUrl);
-    final userCtrl = TextEditingController(text: networkState.redleafService.username);
-    final passCtrl = TextEditingController(text: networkState.redleafService.password);
-    final ollamaCtrl = TextEditingController(text: networkState.ollamaUrl);
+class _SettingsDialog extends StatefulWidget {
+  const _SettingsDialog();
 
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        return MultiProvider(
-          providers: [
-            ChangeNotifierProvider.value(value: networkState),
-            ChangeNotifierProvider.value(value: graphState),
-          ],
-          child: Consumer2<NetworkState, GraphState>(
-            builder: (context, netState, grState, child) {
-              return AlertDialog(
-                title: const Text("Project Settings"),
-                content: SizedBox(
-                  width: 500, 
-                  child: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start,
-                      children:[
-                        const Text("Redleaf API Connection", style: TextStyle(color: kAccentColor, fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 10),
-                        TextField(controller: apiCtrl, decoration: const InputDecoration(labelText: "Redleaf API URL (e.g. http://192.168.x.x:5000)", filled: true, fillColor: Colors.black26)),
-                        const SizedBox(height: 10),
-                        TextField(controller: userCtrl, decoration: const InputDecoration(labelText: "Redleaf Username", filled: true, fillColor: Colors.black26)),
-                        const SizedBox(height: 10),
-                        TextField(controller: passCtrl, obscureText: true, decoration: const InputDecoration(labelText: "Redleaf Password", filled: true, fillColor: Colors.black26)),
-                        const SizedBox(height: 15),
-                        Row(
-                          children: [
-                            ElevatedButton(
-                              style: ElevatedButton.styleFrom(backgroundColor: kNodeBg),
-                              onPressed: netState.redleafAuthStatus == AuthStatus.testing ? null : () {
-                                netState.testAndSaveRedleafCredentials(apiCtrl.text, userCtrl.text, passCtrl.text);
-                              },
-                              child: Text(netState.redleafAuthStatus == AuthStatus.testing ? "Connecting..." : "Connect & Save"),
-                            ),
-                            const SizedBox(width: 15),
-                            _buildStatusIndicator(netState.redleafAuthStatus),
-                            const SizedBox(width: 8),
-                            Expanded(
+  @override
+  State<_SettingsDialog> createState() => _SettingsDialogState();
+}
+
+class _SettingsDialogState extends State<_SettingsDialog> {
+  late TextEditingController apiCtrl;
+  late TextEditingController userCtrl;
+  late TextEditingController passCtrl;
+  late TextEditingController ollamaCtrl;
+  bool _obscurePassword = true;
+
+  @override
+  void initState() {
+    super.initState();
+    final networkState = context.read<NetworkState>();
+    apiCtrl = TextEditingController(text: networkState.redleafService.apiUrl);
+    userCtrl = TextEditingController(text: networkState.redleafService.username);
+    passCtrl = TextEditingController(text: networkState.redleafService.password);
+    ollamaCtrl = TextEditingController(text: networkState.ollamaUrl);
+  }
+
+  @override
+  void dispose() {
+    apiCtrl.dispose();
+    userCtrl.dispose();
+    passCtrl.dispose();
+    ollamaCtrl.dispose();
+    super.dispose();
+  }
+
+  Widget _buildStatusIndicator(AuthStatus status) {
+    Color color;
+    switch (status) {
+      case AuthStatus.none: color = Colors.grey; break;
+      case AuthStatus.testing: color = Colors.amber; break;
+      case AuthStatus.success: color = Colors.greenAccent; break;
+      case AuthStatus.error: color = Colors.redAccent; break;
+      case AuthStatus.mismatch: color = Colors.purpleAccent; break;
+    }
+    return Container(
+      width: 10, height: 10,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle, boxShadow: [BoxShadow(color: color, blurRadius: 4)]),
+    );
+  }
+
+  String _getStatusText(AuthStatus status) {
+    switch (status) {
+      case AuthStatus.none: return "Not Connected";
+      case AuthStatus.testing: return "Testing...";
+      case AuthStatus.success: return "Connected!";
+      case AuthStatus.error: return "Failed to Connect";
+      case AuthStatus.mismatch: return "DB Mismatch!";
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final netState = context.watch<NetworkState>();
+    final grState = context.watch<GraphState>();
+
+    return AlertDialog(
+      title: const Text("Project Settings"),
+      contentPadding: EdgeInsets.zero, 
+      content: SizedBox(
+        width: 600,
+        height: 600, 
+        child: DefaultTabController(
+          length: 2,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const TabBar(
+                indicatorColor: kAccentColor,
+                labelColor: kAccentColor,
+                unselectedLabelColor: Colors.white54,
+                tabs: [
+                  Tab(text: "Connections"),
+                  Tab(text: "Tuning & Debug"),
+                ],
+              ),
+              Expanded(
+                child: TabBarView(
+                  children: [
+                    // --- TAB 1: CONNECTIONS ---
+                    SingleChildScrollView(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text("Redleaf API Connection", style: TextStyle(color: kAccentColor, fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 10),
+                          TextField(controller: apiCtrl, decoration: const InputDecoration(labelText: "Redleaf API URL (e.g. http://192.168.x.x:5000)", filled: true, fillColor: Colors.black26)),
+                          const SizedBox(height: 10),
+                          TextField(controller: userCtrl, decoration: const InputDecoration(labelText: "Redleaf Username", filled: true, fillColor: Colors.black26)),
+                          const SizedBox(height: 10),
+                          TextField(
+                            controller: passCtrl, 
+                            obscureText: _obscurePassword, 
+                            decoration: InputDecoration(
+                              labelText: "Redleaf Password", 
+                              filled: true, 
+                              fillColor: Colors.black26,
+                              suffixIcon: IconButton(
+                                icon: Icon(
+                                  _obscurePassword ? Icons.visibility : Icons.visibility_off,
+                                  color: Colors.white54,
+                                ),
+                                onPressed: () {
+                                  setState(() {
+                                    _obscurePassword = !_obscurePassword;
+                                  });
+                                },
+                              ),
+                            )
+                          ),
+                          const SizedBox(height: 15),
+                          Row(
+                            children: [
+                              ElevatedButton(
+                                style: ElevatedButton.styleFrom(backgroundColor: kNodeBg),
+                                onPressed: netState.redleafAuthStatus == AuthStatus.testing ? null : () {
+                                  netState.testAndSaveRedleafCredentials(apiCtrl.text, userCtrl.text, passCtrl.text, grState);
+                                },
+                                child: Text(netState.redleafAuthStatus == AuthStatus.testing ? "Connecting..." : "Connect & Save"),
+                              ),
+                              const SizedBox(width: 15),
+                              _buildStatusIndicator(netState.redleafAuthStatus),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  netState.redleafAuthStatus == AuthStatus.mismatch 
+                                    ? "MISMATCH! This project file belongs to a different database." 
+                                    : _getStatusText(netState.redleafAuthStatus), 
+                                  style: TextStyle(
+                                    color: netState.redleafAuthStatus == AuthStatus.mismatch ? Colors.purpleAccent : Colors.white70, 
+                                    fontSize: 12, 
+                                    fontWeight: netState.redleafAuthStatus == AuthStatus.mismatch ? FontWeight.bold : FontWeight.normal
+                                  )
+                                ),
+                              ),
+                            ],
+                          ),
+
+                          const SizedBox(height: 20), const Divider(), const SizedBox(height: 10),
+                          
+                          const Text("Ollama API Connection", style: TextStyle(color: kAccentColor, fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 10),
+                          TextField(
+                            controller: ollamaCtrl, 
+                            decoration: const InputDecoration(labelText: "Ollama URL (e.g. http://192.168.x.x:11434)", filled: true, fillColor: Colors.black26),
+                            onChanged: (val) => netState.setOllamaUrl(val),
+                          ),
+                          
+                          if (!netState.ollamaUrl.contains('localhost') && !netState.ollamaUrl.contains('127.0.0.1'))
+                            const Padding(
+                              padding: EdgeInsets.only(top: 8.0),
                               child: Text(
-                                netState.redleafAuthStatus == AuthStatus.mismatch 
-                                  ? "MISMATCH! This project file belongs to a different database." 
-                                  : _getStatusText(netState.redleafAuthStatus), 
-                                style: TextStyle(
-                                  color: netState.redleafAuthStatus == AuthStatus.mismatch ? Colors.purpleAccent : Colors.white70, 
-                                  fontSize: 12, 
-                                  fontWeight: netState.redleafAuthStatus == AuthStatus.mismatch ? FontWeight.bold : FontWeight.normal
-                                )
+                                "Note: To connect to Ollama on a different computer, the host machine must run Ollama with the environment variable OLLAMA_HOST=0.0.0.0",
+                                style: TextStyle(color: Colors.amber, fontSize: 11, fontStyle: FontStyle.italic),
                               ),
                             ),
-                          ],
-                        ),
+                            
+                          const SizedBox(height: 15),
+                          
+                          Row(
+                            children: [
+                              ElevatedButton(
+                                style: ElevatedButton.styleFrom(backgroundColor: kNodeBg),
+                                onPressed: netState.ollamaAuthStatus == AuthStatus.testing ? null : () {
+                                  netState.fetchOllamaModels();
+                                },
+                                child: Text(netState.ollamaAuthStatus == AuthStatus.testing ? "Connecting..." : "Test Connection"),
+                              ),
+                              const SizedBox(width: 15),
+                              _buildStatusIndicator(netState.ollamaAuthStatus),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  _getStatusText(netState.ollamaAuthStatus), 
+                                  style: const TextStyle(color: Colors.white70, fontSize: 12)
+                                ),
+                              ),
+                            ],
+                          ),
 
-                        const SizedBox(height: 20), const Divider(), const SizedBox(height: 10),
-                        
-                        const Text("Ollama API Connection", style: TextStyle(color: kAccentColor, fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 10),
-                        TextField(
-                          controller: ollamaCtrl, 
-                          decoration: const InputDecoration(labelText: "Ollama URL (e.g. http://192.168.x.x:11434)", filled: true, fillColor: Colors.black26),
-                          onChanged: (val) => netState.setOllamaUrl(val),
-                        ),
-                        
-                        if (!netState.ollamaUrl.contains('localhost') && !netState.ollamaUrl.contains('127.0.0.1'))
-                          const Padding(
-                            padding: EdgeInsets.only(top: 8.0),
+                          const SizedBox(height: 20),
+                          const Text("Ollama Model"), const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: DropdownButton<String>(
+                                  value: netState.availableModels.contains(netState.ollamaModel) ? netState.ollamaModel : (netState.availableModels.isNotEmpty ? netState.availableModels.first : null),
+                                  isExpanded: true,
+                                  hint: Text(netState.isScanningModels ? "Scanning Ollama..." : "No Models Found"),
+                                  items: netState.availableModels.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
+                                  onChanged: (val) { if (val != null) netState.setOllamaModel(val); },
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: "Refresh Models List",
+                                icon: netState.isScanningModels ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.refresh),
+                                onPressed: () => netState.fetchOllamaModels(),
+                              )
+                            ],
+                          ),
+                          const SizedBox(height: 15),
+                          Row(
+                            children: [
+                              Expanded(
+                                flex: 2, 
+                                child: ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF335533), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 12)),
+                                  icon: netState.isPreloadingModel ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Icon(Icons.memory, size: 18),
+                                  label: Text(netState.isPreloadingModel ? "LOADING..." : "PRELOAD TO VRAM"),
+                                  onPressed: netState.isPreloadingModel ? null : () async {
+                                    final result = await netState.preloadOllamaModel();
+                                    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result == "Success" ? "${netState.ollamaModel} loaded into memory!" : "Failed: $result"), backgroundColor: result == "Success" ? Colors.green : Colors.red));
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                flex: 1, 
+                                child: OutlinedButton.icon(
+                                  style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent, side: const BorderSide(color: Colors.redAccent), padding: const EdgeInsets.symmetric(vertical: 12)),
+                                  icon: const Icon(Icons.eject, size: 18), label: const Text("UNLOAD"),
+                                  onPressed: () async {
+                                    final result = await netState.unloadOllamaModel();
+                                    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result == "Success" ? "VRAM Cleared!" : "Failed: $result"), backgroundColor: Colors.grey.shade900));
+                                  },
+                                ),
+                              ),
+                            ],
+                          )
+                        ],
+                      ),
+                    ),
+                    
+                    // --- TAB 2: TUNING & DEBUG ---
+                    Padding(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text("Semantic Search Strictness", style: TextStyle(color: kAccentColor, fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 10),
+                          const Text(
+                            "Controls how closely documents must match the agent's search queries. "
+                            "A low number is very strict (few results, high accuracy). A high number is very loose (many results, potential hallucinations).",
+                            style: TextStyle(color: Colors.white54, fontSize: 12),
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              const Text("Strict", style: TextStyle(color: Colors.white70, fontSize: 12)),
+                              Expanded(
+                                child: Slider(
+                                  value: netState.semanticThreshold,
+                                  min: 0.10,
+                                  max: 1.50,
+                                  divisions: 28, // Steps of 0.05
+                                  label: netState.semanticThreshold.toStringAsFixed(2),
+                                  activeColor: kAccentColor,
+                                  inactiveColor: Colors.black26,
+                                  onChanged: (val) {
+                                    netState.setSemanticThreshold(val);
+                                  },
+                                ),
+                              ),
+                              const Text("Loose", style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            ],
+                          ),
+                          Center(
                             child: Text(
-                              "Note: To connect to Ollama on a different computer, the host machine must run Ollama with the environment variable OLLAMA_HOST=0.0.0.0",
-                              style: TextStyle(color: Colors.amber, fontSize: 11, fontStyle: FontStyle.italic),
+                              "Current Threshold: ${netState.semanticThreshold.toStringAsFixed(2)}",
+                              style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
                             ),
                           ),
                           
-                        const SizedBox(height: 15),
-                        
-                        Row(
-                          children: [
-                            ElevatedButton(
-                              style: ElevatedButton.styleFrom(backgroundColor: kNodeBg),
-                              onPressed: netState.ollamaAuthStatus == AuthStatus.testing ? null : () {
-                                netState.fetchOllamaModels();
-                              },
-                              child: Text(netState.ollamaAuthStatus == AuthStatus.testing ? "Connecting..." : "Test Connection"),
-                            ),
-                            const SizedBox(width: 15),
-                            _buildStatusIndicator(netState.ollamaAuthStatus),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                _getStatusText(netState.ollamaAuthStatus), 
-                                style: const TextStyle(color: Colors.white70, fontSize: 12)
+                          const SizedBox(height: 20), const Divider(), const SizedBox(height: 10),
+                          
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text("Agent Debug Log", style: TextStyle(color: kAccentColor, fontWeight: FontWeight.bold)),
+                              Row(
+                                children: [
+                                  TextButton(
+                                    onPressed: () {
+                                      final logText = netState.agentDebugLogs.join('\n');
+                                      Clipboard.setData(ClipboardData(text: logText));
+                                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Debug logs copied to clipboard!")));
+                                    },
+                                    child: const Text("Copy Log", style: TextStyle(color: Colors.white70, fontSize: 12)),
+                                  ),
+                                  TextButton(
+                                    onPressed: () => netState.clearAgentDebugLogs(),
+                                    child: const Text("Clear Log", style: TextStyle(color: Colors.white54, fontSize: 12)),
+                                  ),
+                                ],
+                              )
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          Expanded(
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.black45,
+                                border: Border.all(color: Colors.white12),
+                                borderRadius: BorderRadius.circular(4),
                               ),
+                              child: netState.agentDebugLogs.isEmpty
+                                ? const Center(child: Text("No searches executed yet.", style: TextStyle(color: Colors.white54, fontSize: 12)))
+                                : ListView.builder(
+                                    itemCount: netState.agentDebugLogs.length,
+                                    itemBuilder: (ctx, i) {
+                                      // Render from newest to oldest
+                                      final log = netState.agentDebugLogs[netState.agentDebugLogs.length - 1 - i];
+                                      return Padding(
+                                        padding: const EdgeInsets.only(bottom: 6.0),
+                                        child: SelectableText(log, style: const TextStyle(color: Colors.lightGreenAccent, fontFamily: 'monospace', fontSize: 11)),
+                                      );
+                                    },
+                                  ),
                             ),
-                          ],
-                        ),
-
-                        const SizedBox(height: 20),
-                        const Text("Ollama Model"), const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: DropdownButton<String>(
-                                value: netState.availableModels.contains(netState.ollamaModel) ? netState.ollamaModel : (netState.availableModels.isNotEmpty ? netState.availableModels.first : null),
-                                isExpanded: true,
-                                hint: Text(netState.isScanningModels ? "Scanning Ollama..." : "No Models Found"),
-                                items: netState.availableModels.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
-                                onChanged: (val) { if (val != null) netState.setOllamaModel(val); },
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: "Refresh Models List",
-                              icon: netState.isScanningModels ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.refresh),
-                              onPressed: () => netState.fetchOllamaModels(),
-                            )
-                          ],
-                        ),
-                        const SizedBox(height: 15),
-                        Row(
-                          children: [
-                            Expanded(
-                              flex: 2, 
-                              child: ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF335533), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 12)),
-                                icon: netState.isPreloadingModel ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Icon(Icons.memory, size: 18),
-                                label: Text(netState.isPreloadingModel ? "LOADING..." : "PRELOAD TO VRAM"),
-                                onPressed: netState.isPreloadingModel ? null : () async {
-                                  final result = await netState.preloadOllamaModel();
-                                  if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(result == "Success" ? "${netState.ollamaModel} loaded into memory!" : "Failed: $result"), backgroundColor: result == "Success" ? Colors.green : Colors.red));
-                                },
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              flex: 1, 
-                              child: OutlinedButton.icon(
-                                style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent, side: const BorderSide(color: Colors.redAccent), padding: const EdgeInsets.symmetric(vertical: 12)),
-                                icon: const Icon(Icons.eject, size: 18), label: const Text("UNLOAD"),
-                                onPressed: () async {
-                                  final result = await netState.unloadOllamaModel();
-                                  if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(result == "Success" ? "VRAM Cleared!" : "Failed: $result"), backgroundColor: Colors.grey.shade900));
-                                },
-                              ),
-                            ),
-                          ],
-                        )
-                      ],
+                          )
+                        ],
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-                actions:[TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Done", style: TextStyle(color: kAccentColor)))],
-              );
-            },
+              ),
+            ],
           ),
-        );
-      },
+        ),
+      ),
+      actions:[
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text("Close", style: TextStyle(color: kAccentColor)))
+      ],
     );
   }
 }

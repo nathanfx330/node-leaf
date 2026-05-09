@@ -43,3 +43,13 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Environments and Secrets
+.env
+*.jks
+*.keystore
+key.properties
+
+# Desktop specific ephemeral build files
+**/linux/flutter/ephemeral/
+**/windows/flutter/ephemeral/

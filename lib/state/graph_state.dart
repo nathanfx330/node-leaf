@@ -154,7 +154,7 @@ class GraphState extends ChangeNotifier {
     _selectedNodeIds.clear(); 
     _clipboardData = null; 
     
-    networkState.resetNetworkState();
+    // --- FIX: Removed networkState.resetNetworkState(); so it doesn't log you out ---
 
     final sceneId = const Uuid().v4();
     final outputId = const Uuid().v4();
@@ -614,7 +614,7 @@ class GraphState extends ChangeNotifier {
 
   // --- GRAPH TOPOLOGY (WIRES & PORTS) ---
 
-  // --- FIX: Expose strict port memory for Merge Nodes ---
+  // --- FIX: Strict Port Memory for Merge Nodes ---
   List<String> getMergePorts(String targetId) {
     if (!_mergePorts.containsKey(targetId)) {
         List<String> incoming = [];

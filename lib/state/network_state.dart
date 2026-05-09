@@ -1,5 +1,5 @@
 // --- File: lib/state/network_state.dart ---
-import 'dart:async'; // <-- ADDED for Completer
+import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../constants.dart';
@@ -35,9 +35,13 @@ class NetworkState extends ChangeNotifier {
   // --- Force Answer Flag ---
   bool _isForceAnswerTriggered = false;
 
-  // --- NEW: Interactive Input State ---
+  // --- Interactive Input State ---
   String? _waitingForInputNodeId;
   Completer<String>? _inputCompleter;
+
+  // --- Agent Tuning & Debug State ---
+  double _semanticThreshold = 0.80;
+  final List<String> _agentDebugLogs = [];
 
   NetworkState() {
     fetchOllamaModels();
@@ -58,7 +62,32 @@ class NetworkState extends ChangeNotifier {
   bool get isScanningModels => _isScanningModels;
   bool get isPreloadingModel => _isPreloadingModel;
 
-  // --- NEW: Interactive Getters/Methods ---
+  // --- Tuning Getters ---
+  double get semanticThreshold => _semanticThreshold;
+  List<String> get agentDebugLogs => _agentDebugLogs;
+
+  void setSemanticThreshold(double val) {
+    _semanticThreshold = val;
+    notifyListeners();
+  }
+
+  void addAgentDebugLog(String message) {
+    final now = DateTime.now();
+    final timeStr = "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}";
+    _agentDebugLogs.add("[$timeStr] $message");
+    // Keep it from getting too massive
+    if (_agentDebugLogs.length > 500) {
+      _agentDebugLogs.removeAt(0);
+    }
+    notifyListeners(); // We want the debug window to update in real-time
+  }
+
+  void clearAgentDebugLogs() {
+    _agentDebugLogs.clear();
+    notifyListeners();
+  }
+
+  // --- Interactive Getters/Methods ---
   bool isNodeWaitingForInput(String nodeId) => _waitingForInputNodeId == nodeId;
   
   Future<String> waitForUserInput(String nodeId) async {
@@ -114,7 +143,7 @@ class NetworkState extends ChangeNotifier {
 
   // --- REDLEAF AUTHENTICATION ---
 
-  Future<void> testAndSaveRedleafCredentials(String api, String user, String pass) async {
+  Future<void> testAndSaveRedleafCredentials(String api, String user, String pass, GraphState graphState) async {
     _redleafAuthStatus = AuthStatus.testing; 
     notifyListeners();
     
@@ -134,6 +163,7 @@ class NetworkState extends ChangeNotifier {
         }
         _redleafInstanceId = fetchedId;
       }
+      graphState.calculateWikiGraph(this);
     }
     
     _redleafAuthStatus = success ? AuthStatus.success : AuthStatus.error;
@@ -202,7 +232,6 @@ class NetworkState extends ChangeNotifier {
   void forceAnswerNow() {
     if (_generatingNodeId != null) {
       _isForceAnswerTriggered = true;
-      // --- MODIFIED: Release the completer if the user stops execution during a pause ---
       if (_inputCompleter != null && !_inputCompleter!.isCompleted) {
         _inputCompleter!.complete("");
         _waitingForInputNodeId = null;
@@ -211,7 +240,7 @@ class NetworkState extends ChangeNotifier {
     }
   }
 
-  // --- LLM GENERATION PIPELINE (Unchanged) ---
+  // --- LLM GENERATION PIPELINE ---
 
   Future<void> triggerOllamaGeneration(StoryNode node, List<StoryNode> sequence, GraphState graphState) async {
     _generatingNodeId = node.id; 
