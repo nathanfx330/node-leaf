@@ -108,7 +108,7 @@ SRT transcripts are now first-class citizens in Nodeleaf. Ask Nodeleaf to compre
     └─────────┬─────────┘           └─────────┬─────────┘
               └──────────────┬──────────────┘
                     ┌────────▼─────────┐
-                    │ 🖋️ Wiki Writer    │  (page with [Doc X @ HH:MM:SS] cites)
+                    │ 🖋️ Wiki Writer   │  (page with [Doc X @ HH:MM:SS] cites)
                     └──────────────────┘
 ```
 
