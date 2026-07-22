@@ -7,9 +7,9 @@
 >
 > **Without a running Redleaf instance and an ingested corpus, Node Leaf has nothing to retrieve, nothing to cite, and nothing to verify against.** Install and populate [Redleaf](https://github.com/nathanfx330/redleaf) first; then come back and give it a canvas.
 
-Blog: [Node Leaf](https://nathanielwestveer.com/posts/node-leaf/) · [The Agentic Wiki](https://nathanielwestveer.com/posts/agentic-wiki/)
+Blog: [Node Leaf](https://nathanielwestveer.com/posts/node-leaf/) · [The Agentic Wiki](https://nathanielwestveer.com/posts/agentic-wiki/) · [Why Chat Doesn't Scale for Deep Research](https://nathanielwestveer.com/posts/redleaf-engine-2-5/)
 
-![Node Leaf](https://nathanielwestveer.com/posts/node-leaf/nl2.png)
+![Node Leaf](https://nathanielwestveer.com/posts/node-leaf/nl2.png)  
 
 ---
 
