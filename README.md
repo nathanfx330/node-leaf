@@ -98,7 +98,7 @@ Node Leaf is a Directed Acyclic Graph. Context flows from top to bottom and accu
 SRT transcripts are now first-class citizens in Nodeleaf. Ask Nodeleaf to compress them and provide a short, on-paper edit of the most impactful statements.
 ```
                     ┌──────────────────┐
-                    │ 🎬 Media Reader   │  (SRT transcript from Redleaf)
+                    │ 🎬 Media Reader  │  (SRT transcript from Redleaf)
                     └────────┬─────────┘
               ┌──────────────┴──────────────┐
     ┌─────────▼─────────┐           ┌─────────▼─────────┐
@@ -112,7 +112,7 @@ SRT transcripts are now first-class citizens in Nodeleaf. Ask Nodeleaf to compre
                     └──────────────────┘
 ```
 
-Wiki Council has now been upgraded to understand and provide the same comparative analysis of transcripts. It can also debate and identify the most meaningful aspects of a transcript.---
+Wiki Council has now been upgraded to understand and provide the same comparative analysis of transcripts. It can also debate and identify the most meaningful aspects of a transcript.
 
 ## 🚀 Getting Started
 
