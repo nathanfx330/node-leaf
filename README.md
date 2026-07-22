@@ -3,7 +3,7 @@
 **Node Leaf** is a visual, node-based RAG studio and prompt orchestration engine. Built in Flutter. Runs entirely on your machine, against your corpus, through your local LLMs via **Ollama**.
 
 > ### ⚠️ Node Leaf requires Redleaf
-> Node Leaf is the **One half of a two-part system**. It is the reasoning canvas; the **[Redleaf Knowledge Engine](https://github.com/nathanfx330/redleaf)** is the ground it stands on — the Flask server that ingests your documents and media, builds the full-text and semantic indexes, extracts entities into a knowledge graph, and serves it all through the API every Node Leaf agent depends on.
+> Node Leaf is the **One half of a Two-part system**. It is the reasoning canvas; the **[Redleaf Knowledge Engine](https://github.com/nathanfx330/redleaf)** is the ground it stands on — the Flask server that ingests your documents and media, builds the full-text and semantic indexes, extracts entities into a knowledge graph, and serves it all through the API every Node Leaf agent depends on.
 >
 > **Without a running Redleaf instance and an ingested corpus, Node Leaf has nothing to retrieve, nothing to cite, and nothing to verify against.** Install and populate [Redleaf](https://github.com/nathanfx330/redleaf) first; then come back and give it a canvas.
 
@@ -101,11 +101,11 @@ SRT transcripts are now first-class citizens in Nodeleaf. Ask Nodeleaf to compre
                     │ 🎬 Media Reader   │  (SRT transcript from Redleaf)
                     └────────┬─────────┘
               ┌──────────────┴──────────────┐
-    ┌─────────▼─────────┐         ┌─────────▼─────────┐
+    ┌─────────▼─────────┐           ┌─────────▼─────────┐
     │ 🎞️ Media Compressor│         │ 🏛️ Wiki Council    │
     │  (paper edit +     │         │  (debates a verified│
-    │   audition chips)  │         │   Evidence Pack)   │
-    └─────────┬─────────┘         └─────────┬─────────┘
+    │    linked audio)   │         │   Evidence Pack)   │
+    └─────────┬─────────┘           └─────────┬─────────┘
               └──────────────┬──────────────┘
                     ┌────────▼─────────┐
                     │ 🖋️ Wiki Writer    │  (page with [Doc X @ HH:MM:SS] cites)
