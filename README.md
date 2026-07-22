@@ -3,7 +3,7 @@
 **Node Leaf** is a visual, node-based RAG studio and prompt orchestration engine. Built in Flutter. Runs entirely on your machine, against your corpus, through your local LLMs via **Ollama**.
 
 > ### ⚠️ Node Leaf requires Redleaf
-> Node Leaf is the **front half of a two-part system**. It is the reasoning canvas; the **[Redleaf Knowledge Engine](https://github.com/nathanfx330/redleaf)** is the ground it stands on — the Flask server that ingests your documents and media, builds the full-text and semantic indexes, extracts entities into a knowledge graph, and serves it all through the API every Node Leaf agent depends on.
+> Node Leaf is the **One half of a two-part system**. It is the reasoning canvas; the **[Redleaf Knowledge Engine](https://github.com/nathanfx330/redleaf)** is the ground it stands on — the Flask server that ingests your documents and media, builds the full-text and semantic indexes, extracts entities into a knowledge graph, and serves it all through the API every Node Leaf agent depends on.
 >
 > **Without a running Redleaf instance and an ingested corpus, Node Leaf has nothing to retrieve, nothing to cite, and nothing to verify against.** Install and populate [Redleaf](https://github.com/nathanfx330/redleaf) first; then come back and give it a canvas.
 
@@ -95,8 +95,7 @@ Node Leaf is a Directed Acyclic Graph. Context flows from top to bottom and accu
 
 ## 🎬 The Media-to-Wiki Pipeline
 
-The Continuous Synthesis Loop, extended to footage. One wire fork, two products:
-
+SRT transcripts are now first-class citizens in Nodeleaf. Ask Nodeleaf to compress them and provide a short, on-paper edit of the most impactful statements.
 ```
                     ┌──────────────────┐
                     │ 🎬 Media Reader   │  (SRT transcript from Redleaf)
@@ -113,9 +112,7 @@ The Continuous Synthesis Loop, extended to footage. One wire fork, two products:
                     └──────────────────┘
 ```
 
-An interview enters as immutable source. It leaves as working knowledge — a paper edit you can audition with your ears, and a wiki page whose every quote was verified against the subtitles and stamped with the moment it was actually spoken.
-
----
+Wiki Council has now been upgraded to understand and provide the same comparative analysis of transcripts. It can also debate and identify the most meaningful aspects of a transcript.---
 
 ## 🚀 Getting Started
 
