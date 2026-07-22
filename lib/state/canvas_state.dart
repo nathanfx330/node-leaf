@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../constants.dart';
-import '../models/node_models.dart';
 import 'graph_state.dart';
 
 class CanvasState extends ChangeNotifier {
@@ -29,6 +28,16 @@ class CanvasState extends ChangeNotifier {
   int _hoveredWireIndex = -1;
   
   bool _isInvalidCycle = false;
+
+  // --- NEW: Rejection feedback channel (consumed by canvas_view SnackBar) ---
+  String? _lastRejectionMessage;
+  int _rejectionTick = 0;
+  String? get lastRejectionMessage => _lastRejectionMessage;
+  int get rejectionTick => _rejectionTick;
+  void _reject(String message) {
+    _lastRejectionMessage = message;
+    _rejectionTick++;
+  }
 
   CanvasState() {
     resetCanvas();
@@ -148,7 +157,7 @@ class CanvasState extends ChangeNotifier {
           
           if (foundHit) {
               // Check for both recursive cycles and cross-column contamination
-              if (_detectCycle(_draggingWireSourceId!, node.id, graphState.nodes) || 
+              if (graphState.wouldCreateCycle(_draggingWireSourceId!, node.id) || 
                   _causesCrossContamination(_draggingWireSourceId!, node.id, _hoveredMergePortIndex, graphState)) {
                   _isInvalidCycle = true; 
               }
@@ -161,7 +170,7 @@ class CanvasState extends ChangeNotifier {
             _hoveredTargetId = node.id;
             
             // Check for both recursive cycles and cross-column contamination
-            if (_detectCycle(_draggingWireSourceId!, node.id, graphState.nodes) || 
+            if (graphState.wouldCreateCycle(_draggingWireSourceId!, node.id) || 
                 _causesCrossContamination(_draggingWireSourceId!, node.id, null, graphState)) {
               _isInvalidCycle = true; 
             }
@@ -173,7 +182,9 @@ class CanvasState extends ChangeNotifier {
       Offset outPort = graphState.getOutputPortGlobal(node.id); 
       if (node.type != NodeType.output && (_draggingWireHead! - outPort).distance < 60) { 
         _hoveredSwapTargetId = node.id; 
-        if (_causesCrossContamination(_draggingWireSourceId!, node.id, null, graphState)) {
+        // --- NEW: Swaps can create cycles too — source inherits this node's children ---
+        bool swapCreatesCycle = node.nextNodeIds.any((childId) => graphState.wouldCreateCycle(_draggingWireSourceId!, childId));
+        if (swapCreatesCycle || _causesCrossContamination(_draggingWireSourceId!, node.id, null, graphState)) {
             _isInvalidCycle = true;
         }
         break; 
@@ -183,11 +194,19 @@ class CanvasState extends ChangeNotifier {
   }
 
   void endWireDrag(GraphState graphState) {
-    if (_draggingWireSourceId != null && !_isInvalidCycle) {
-      if (_hoveredTargetId != null) { 
-        graphState.connectNode(_draggingWireSourceId!, _hoveredTargetId!, portIndex: _hoveredMergePortIndex); 
+    if (_draggingWireSourceId != null) {
+      if (_isInvalidCycle && (_hoveredTargetId != null || _hoveredSwapTargetId != null)) {
+        // --- NEW: The user dropped on a red target — tell them why nothing happened ---
+        _reject("Connection rejected: it would create a loop or mix merge columns.");
+      } else if (_hoveredTargetId != null) { 
+        // GraphState re-checks as a backstop; surface its verdict if it disagrees
+        if (!graphState.connectNode(_draggingWireSourceId!, _hoveredTargetId!, portIndex: _hoveredMergePortIndex)) {
+          _reject("Connection rejected: it would create a loop.");
+        }
       } else if (_hoveredSwapTargetId != null) {
-        graphState.swapNodeConnections(_draggingWireSourceId!, _hoveredSwapTargetId!);
+        if (!graphState.swapNodeConnections(_draggingWireSourceId!, _hoveredSwapTargetId!)) {
+          _reject("Swap rejected: it would create a loop.");
+        }
       }
     }
     
@@ -303,7 +322,10 @@ class CanvasState extends ChangeNotifier {
 
   void onNodeDragEnd(String droppedNodeId, GraphState graphState) {
     if (_hoveredWireSourceId != null && _hoveredWireIndex != -1) {
-      graphState.insertNodeIntoWire(_hoveredWireSourceId!, _hoveredWireIndex, droppedNodeId);
+      // --- NEW: Surface rejection if the insertion would create a cycle ---
+      if (!graphState.insertNodeIntoWire(_hoveredWireSourceId!, _hoveredWireIndex, droppedNodeId)) {
+        _reject("Insertion rejected: it would create a loop.");
+      }
       
       _hoveredWireSourceId = null; 
       _hoveredWireIndex = -1; 
@@ -321,16 +343,7 @@ class CanvasState extends ChangeNotifier {
     return (p - (a + (b - a) * t)).distance; 
   }
 
-  bool _detectCycle(String sourceId, String targetId, Map<String, StoryNode> nodes) { 
-    if (sourceId == targetId) return true; 
-    Set<String> visited = {}; 
-    List<String> stack = [targetId]; 
-    while (stack.isNotEmpty) { 
-      final curr = stack.removeLast(); 
-      if (curr == sourceId) return true; 
-      if (!visited.add(curr)) continue; 
-      if (nodes.containsKey(curr)) stack.addAll(nodes[curr]!.nextNodeIds); 
-    } 
-    return false; 
-  }
+  // NOTE: _detectCycle removed — cycle detection is now single-sourced in
+  // GraphState.wouldCreateCycle so canvas feedback and connection enforcement
+  // can never disagree.
 }

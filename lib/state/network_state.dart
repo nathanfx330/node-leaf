@@ -13,6 +13,7 @@ import '../agents/wiki_writer_agent.dart';
 import '../agents/summarizer_agent.dart';
 import '../agents/output_agent.dart';
 import '../agents/research_party_agent.dart'; 
+import '../agents/compressor_agent.dart'; // <--- NEW IMPORT
 import 'graph_state.dart'; 
 
 class NetworkState extends ChangeNotifier {
@@ -361,6 +362,26 @@ class NetworkState extends ChangeNotifier {
     notifyListeners();
 
     await ResearchPartyAgent.execute(
+      node: node,
+      sequence: sequence,
+      graphState: graphState,
+      networkState: this,
+      checkForceAnswer: () => _isForceAnswerTriggered,
+      onUpdate: () => notifyListeners(),
+    );
+
+    _generatingNodeId = null;
+    _isForceAnswerTriggered = false;
+    notifyListeners();
+  }
+
+  // --- NEW: COMPRESSOR TRIGGER ---
+  Future<void> triggerCompressorGeneration(StoryNode node, List<StoryNode> sequence, GraphState graphState) async {
+    _generatingNodeId = node.id; 
+    _isForceAnswerTriggered = false;
+    notifyListeners();
+
+    await CompressorAgent.execute(
       node: node,
       sequence: sequence,
       graphState: graphState,

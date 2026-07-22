@@ -18,6 +18,10 @@ class RedleafService {
   String _csrfToken = "";
   bool isLoggedIn = false;
 
+  // --- NEW: Exposed for MediaPlayerService (ffplay needs the session cookie
+  // to stream media from Redleaf's authenticated /serve_document route) ---
+  String get sessionCookie => _cookie;
+
   Future<bool> authenticate() async {
     if (username.isEmpty || password.isEmpty) return false;
     try {
@@ -277,13 +281,12 @@ class RedleafService {
     required String query,
     required List<dynamic> entities,
     required List<String> fileTypes,
-    int limit = 5, // <-- NEW: Dynamic limit!
+    int limit = 5, 
   }) async {
     if (!await _ensureAuth()) return "[Auth Error: Not connected to Redleaf]";
     
     final String urlPath = '/api/search/advanced?threshold=${networkState.semanticThreshold}';
     
-    // --- NEW: Parse the entities to log exactly what Boolean mode the Agent is using ---
     int docEnts = 0, pageEnts = 0, excludeEnts = 0;
     for (var e in entities) {
       if (e is Map) {
@@ -309,7 +312,7 @@ class RedleafService {
         "q": query,
         "entities": entities,
         "file_types": fileTypes,
-        "limit": limit // <-- NEW: Passing dynamic limit to Flask
+        "limit": limit 
       });
 
       if (res.statusCode == 200) {
@@ -373,6 +376,150 @@ class RedleafService {
     return output;
   }
 
+  // --- NEW TRANSCRIPT FETCHER ---
+  // --- NEW: Parses "HH:MM:SS", "MM:SS", or SRT "HH:MM:SS,mmm" into seconds ---
+  static double? parseTimestampToSeconds(String raw) {
+    final clean = raw.trim().replaceAll(',', '.');
+    final parts = clean.split(':');
+    try {
+      if (parts.length == 3) {
+        return int.parse(parts[0]) * 3600 + int.parse(parts[1]) * 60 + double.parse(parts[2]);
+      } else if (parts.length == 2) {
+        return int.parse(parts[0]) * 60 + double.parse(parts[1]);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<String> fetchTranscriptContext(StoryNode node) async {
+    if (!await _ensureAuth()) return "[Auth Error: Not connected to Redleaf]";
+    try {
+      final inputStr = node.content.trim();
+      
+      // --- NEW: Optional time-window syntax, mirroring the Document node's page syntax:
+      //     "42 + time: 00:10:00-00:25:00"   (also accepts "id: 42 + time: 10:00-25:00")
+      final match = RegExp(
+        r'(?:id:\s*)?(\d+)(?:\s*\+\s*time:\s*([\d:.,]+)\s*-\s*([\d:.,]+))?',
+        caseSensitive: false,
+      ).firstMatch(inputStr);
+      final docId = match?.group(1);
+      double? windowStart;
+      double? windowEnd;
+      if (match?.group(2) != null && match?.group(3) != null) {
+        windowStart = parseTimestampToSeconds(match!.group(2)!);
+        windowEnd = parseTimestampToSeconds(match.group(3)!);
+      }
+
+      if (docId == null || docId.isEmpty) return "[Invalid Media ID: $inputStr]";
+
+      final res = await http.get(Uri.parse('$apiUrl/api/document/$docId/transcript'), headers: {'Cookie': _cookie});
+      if (res.statusCode == 200) {
+        final data = _safeJsonDecode(res);
+        if (data['success'] == true) {
+          StringBuffer sb = StringBuffer();
+          sb.writeln("\n>>> REDLEAF MEDIA TRANSCRIPT (DOC #$docId) <<<");
+          sb.writeln("File: ${data['path']}");
+          
+          if (data['metadata'] != null) {
+            sb.writeln("Metadata: ${data['metadata']}");
+          }
+          if (windowStart != null && windowEnd != null) {
+            sb.writeln("NOTE: Transcript limited to time window ${match!.group(2)} - ${match.group(3)}.");
+          }
+          sb.writeln("-----------------------------------------");
+
+          final List<dynamic> cues = data['cues'] ?? [];
+          int included = 0;
+          for (var cue in cues) {
+             // --- NEW: Client-side time-window filter (cue start must fall inside window) ---
+             if (windowStart != null && windowEnd != null) {
+               final tsRaw = (cue['timestamp'] ?? '').toString();
+               final startPart = tsRaw.split('-->').first;
+               final cueStart = parseTimestampToSeconds(startPart);
+               if (cueStart == null || cueStart < windowStart || cueStart > windowEnd) continue;
+             }
+             // Format: [00:01:23,400 --> 00:01:25,000] The actual dialogue...
+             sb.writeln("[${cue['timestamp']}] ${cue['dialogue']}");
+             included++;
+          }
+          if (windowStart != null && included == 0) {
+            sb.writeln("[No cues found inside the requested time window.]");
+          }
+
+          // --- FIX 1: Add the Editor's Notes / Brief into the transcript context ---
+          if (node.ollamaPrompt.isNotEmpty) {
+            sb.writeln("\n\n>>> EDITOR's NOTES / TRANSCRIPT BRIEF <<<");
+            sb.writeln(node.ollamaPrompt);
+            sb.writeln(">>> END BRIEF <<<");
+          }
+
+          // --- NEW FIX: Entity pills now reach the LLM (parity with fetchDocumentText) ---
+          if (node.redleafPills.isNotEmpty) {
+            sb.writeln("\n\n>>> KEY ENTITIES TO TRACK IN THIS TRANSCRIPT <<<");
+            for (var pill in node.redleafPills) {
+              sb.writeln(await fetchContextForPill(pill));
+            }
+            sb.writeln(">>> END ENTITY TRACKING <<<");
+          }
+
+          // --- NEW FIX: Pinned curation comments now reach the LLM (parity with fetchDocumentText) ---
+          if (node.pinnedComments.isNotEmpty) {
+            sb.writeln("\n\n>>> HUMAN CURATION FOR TRANSCRIPT #$docId <<<");
+            for (var comment in node.pinnedComments) {
+              sb.writeln("---");
+              if (comment['is_quote'] == true) sb.writeln("TYPE: Direct Quote pulled from this transcript");
+              if (comment['is_commentary'] == true) sb.writeln("TYPE: Editor/Producer Commentary");
+              if (comment['refers_to_doc'] == true) sb.writeln("CONTEXT: This refers directly to the transcript above.");
+              sb.writeln("ANNOTATION BY ${comment['username']}: \"${comment['comment_text']}\"");
+            }
+            sb.writeln(">>> END HUMAN CURATION <<<");
+          }
+          
+          sb.writeln(">>> END TRANSCRIPT <<<\n");
+          return sb.toString();
+        } else {
+          return "[Error: ${data['message']}]";
+        }
+      }
+    } catch (e) { debugPrint("Transcript fetch error: $e"); }
+    return "[Error fetching Transcript data for input: ${node.content}]";
+  }
+
+  // --- NEW: Fetch linked-media status for a transcript (for in-panel audition playback).
+  // Returns null if unauthenticated/error. On success:
+  // { linked: bool, url: String (absolute), type: 'audio'|'video', source: 'web'|'local', offset: double }
+  Future<Map<String, dynamic>?> fetchMediaStatus(String docIdStr) async {
+    if (!await _ensureAuth()) return null;
+    final match = RegExp(r'(?:id:\s*)?(\d+)').firstMatch(docIdStr.trim());
+    final docId = match?.group(1);
+    if (docId == null || docId.isEmpty) return null;
+
+    try {
+      final res = await http.get(Uri.parse('$apiUrl/api/document/$docId/media_status'), headers: {'Cookie': _cookie});
+      if (res.statusCode == 200) {
+        final data = _safeJsonDecode(res);
+        if (data['linked'] == true) {
+          String path = data['path'] ?? '';
+          // Local media is served through Redleaf's authenticated Flask route:
+          // media_status returns a site-relative URL, so absolutize it.
+          final bool isWeb = data['source'] == 'web';
+          final String url = isWeb ? path : '$apiUrl$path';
+          return {
+            'linked': true,
+            'url': url,
+            'type': data['type'],
+            'source': data['source'],
+            'offset': (data['offset'] is num) ? (data['offset'] as num).toDouble() : 0.0,
+          };
+        }
+        return {'linked': false};
+      }
+    } catch (e) {
+      debugPrint("Media status fetch error for Doc $docId: $e");
+    }
+    return null;
+  }
+
   Future<String> fetchDocumentText(StoryNode node) async {
     if (!await _ensureAuth()) return "[Auth Error: Not connected to Redleaf]";
     try {
@@ -381,7 +528,6 @@ class RedleafService {
       int? startPage;
       int? endPage;
 
-      // Parse syntax: "12" or "id:12 + page:1-3" or "id:12 + page:4"
       final match = RegExp(r'(?:id:\s*)?(\d+)(?:\s*\+\s*page:\s*(\d+)(?:-(\d+))?)?', caseSensitive: false).firstMatch(inputStr.trim());
       
       if (match != null) {

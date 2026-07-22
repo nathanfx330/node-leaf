@@ -204,7 +204,8 @@ class GraphState extends ChangeNotifier {
 
   Future<void> _writeToDisk(String path, NetworkState networkState) async {
     final Map<String, dynamic> projectData = {
-      'version': 28, // Incremented version for Wiki features
+      'version': 29, // Incremented version for merge-port persistence
+      'merge_ports': _mergePorts, // --- NEW: Port order is semantic; persist it ---
       'name': _projectName, 
       'ollama_url': networkState.ollamaUrl, 
       'ollama_model': networkState.ollamaModel, 
@@ -254,6 +255,13 @@ class GraphState extends ChangeNotifier {
       _nodes.clear(); 
       _undoStack.clear();
       _mergePorts.clear(); // Clear port memory
+      // --- NEW: Restore persisted port memory (v29+). Older files fall back to
+      // X-position derivation in getMergePorts, same as before. ---
+      if (data['merge_ports'] != null) {
+        (data['merge_ports'] as Map<String, dynamic>).forEach((key, value) {
+          _mergePorts[key] = List<String>.from(value);
+        });
+      }
       _projectName = data['name'] ?? "Untitled"; 
       
       networkState.loadNetworkConfig(
@@ -552,7 +560,9 @@ class GraphState extends ChangeNotifier {
     if (type == NodeType.wikiWriter) title = "Wiki Writer"; 
     if (type == NodeType.council) title = "Wiki Council";
     if (type == NodeType.researchParty) title = "Research Party";
-    if (type == NodeType.merge) title = "Merge Context"; // ADDED
+    if (type == NodeType.merge) title = "Merge Context";
+    if (type == NodeType.mediaReader) title = "Media/SRT Reader";
+    if (type == NodeType.compressor) title = "Media Compressor";
 
     _nodes[id] = StoryNode(id: id, position: centerPos - const Offset(kNodeWidth / 2, kNodeHeight / 2), title: title, type: type);
     _selectedNodeIds = {id};
@@ -704,12 +714,35 @@ class GraphState extends ChangeNotifier {
     return node.position + Offset(width / 2, node.currentHeight);
   }
 
-  // --- FIX: Strict connection assignment ---
-  void connectNode(String sourceId, String targetId, {int? portIndex}) {
+  // --- NEW: Cycle Guard ---
+  // Adding source -> target creates a cycle if source is already reachable FROM target.
+  // Without this check, Kahn's sort in _getTopologicalPath silently drops any node
+  // trapped in a cycle, so its content vanishes from the compiled LLM context.
+  bool wouldCreateCycle(String sourceId, String targetId) {
+    if (sourceId == targetId) return true;
+    final Set<String> visited = {};
+    final List<String> stack = [targetId];
+    while (stack.isNotEmpty) {
+      final curr = stack.removeLast();
+      if (curr == sourceId) return true;
+      if (!visited.add(curr)) continue;
+      final node = _nodes[curr];
+      if (node != null) stack.addAll(node.nextNodeIds);
+    }
+    return false;
+  }
+
+  // --- FIX: Strict connection assignment (returns false if rejected) ---
+  bool connectNode(String sourceId, String targetId, {int? portIndex}) {
+    // --- NEW: Reject connections that would create a cycle ---
+    if (wouldCreateCycle(sourceId, targetId)) {
+      debugPrint("Connection rejected: $sourceId -> $targetId would create a cycle.");
+      return false;
+    }
     recordUndo();
     final source = _nodes[sourceId]!;
     final target = _nodes[targetId];
-    if (target == null) return;
+    if (target == null) return false;
     
     if (target.type == NodeType.merge) {
       List<String> ports = getMergePorts(targetId);
@@ -746,16 +779,25 @@ class GraphState extends ChangeNotifier {
     
     recalculateSequence();
     notifyListeners();
+    return true;
   }
 
-  void swapNodeConnections(String sourceId, String targetId) {
+  // --- NEW: Swap is now cycle-guarded. Source inherits target's children, so a
+  // cycle forms if any of those children can already reach the source. ---
+  bool swapNodeConnections(String sourceId, String targetId) {
+    final source = _nodes[sourceId];
+    final target = _nodes[targetId];
+    if (source == null || target == null) return false;
+    if (target.nextNodeIds.any((childId) => wouldCreateCycle(sourceId, childId))) {
+      debugPrint("Swap rejected: $sourceId inheriting ${targetId}'s outputs would create a cycle.");
+      return false;
+    }
     recordUndo();
-    final source = _nodes[sourceId]!;
-    final target = _nodes[targetId]!;
     source.nextNodeIds = List.from(target.nextNodeIds);
     target.nextNodeIds.clear(); 
     recalculateSequence();
     notifyListeners();
+    return true;
   }
 
   void disconnectNode(String id) { 
@@ -785,10 +827,19 @@ class GraphState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void insertNodeIntoWire(String sourceId, int wireIndex, String newNodeId) {
-    recordUndo();
+  bool insertNodeIntoWire(String sourceId, int wireIndex, String newNodeId) {
     final source = _nodes[sourceId];
-    if (source != null && wireIndex < source.nextNodeIds.length) {
+    if (source == null || wireIndex >= source.nextNodeIds.length) return false;
+    // --- NEW: Cycle Guard for insertion (source -> new -> target) ---
+    // Also covers the edge case where the inserted node already links to the
+    // target and therefore KEEPS its other outgoing edges (see below).
+    final existingTarget = source.nextNodeIds[wireIndex];
+    if (wouldCreateCycle(sourceId, newNodeId) || wouldCreateCycle(newNodeId, existingTarget)) {
+      debugPrint("Insertion rejected: would create a cycle.");
+      return false;
+    }
+    recordUndo();
+    if (wireIndex < source.nextNodeIds.length) {
       final targetId = source.nextNodeIds[wireIndex];
       source.nextNodeIds[wireIndex] = newNodeId;
       if (!_nodes[newNodeId]!.nextNodeIds.contains(targetId)) {
@@ -797,6 +848,7 @@ class GraphState extends ChangeNotifier {
     }
     recalculateSequence();
     notifyListeners();
+    return true;
   }
 
   // --- UNDO / REDO / CLIPBOARD ---
@@ -808,7 +860,8 @@ class GraphState extends ChangeNotifier {
   }
   
   void recordUndo() { 
-    final state = jsonEncode({'nodes': _nodes.values.map((n) => n.toJson()).toList(), 'name': _projectName}); 
+    // --- NEW: merge_ports included so undo can't desync port memory from topology ---
+    final state = jsonEncode({'nodes': _nodes.values.map((n) => n.toJson()).toList(), 'name': _projectName, 'merge_ports': _mergePorts}); 
     if (_undoStack.isNotEmpty && _undoStack.last == state) return; 
     _undoStack.add(state); 
     if (_undoStack.length > _maxUndo) _undoStack.removeAt(0); 
@@ -820,6 +873,13 @@ class GraphState extends ChangeNotifier {
     try { 
       final Map<String, dynamic> data = jsonDecode(previousJson); 
       _nodes.clear(); 
+      // --- NEW: Restore port memory alongside topology ---
+      _mergePorts.clear();
+      if (data['merge_ports'] != null) {
+        (data['merge_ports'] as Map<String, dynamic>).forEach((key, value) {
+          _mergePorts[key] = List<String>.from(value);
+        });
+      }
       _projectName = data['name']; 
       for (var n in data['nodes']) { 
         final node = StoryNode.fromJson(n); 
@@ -848,7 +908,7 @@ class GraphState extends ChangeNotifier {
       List<String> nextIds = []; 
       if (data['next_ids'] != null) { 
         for (var id in List<String>.from(data['next_ids'])) { 
-          if (_nodes[id]?.type != NodeType.output && _nodes[id]?.type != NodeType.wikiWriter && _nodes[id]?.type != NodeType.council && _nodes[id]?.type != NodeType.researchParty) nextIds.add(id); 
+          if (_nodes[id]?.type != NodeType.output && _nodes[id]?.type != NodeType.wikiWriter && _nodes[id]?.type != NodeType.council && _nodes[id]?.type != NodeType.researchParty && _nodes[id]?.type != NodeType.compressor) nextIds.add(id); 
         } 
       } 
       final newNode = StoryNode.fromJson(data)..position = newPos..nextNodeIds = nextIds; 
@@ -914,7 +974,7 @@ class GraphState extends ChangeNotifier {
     List<StoryNode> targetNodes = _nodes.values.where((n) =>
       n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study ||
       n.type == NodeType.summarize || n.type == NodeType.wikiWriter ||
-      n.type == NodeType.council || n.type == NodeType.researchParty
+      n.type == NodeType.council || n.type == NodeType.researchParty || n.type == NodeType.compressor
     ).toList();
 
     if (targetNodes.isEmpty) return;
@@ -939,7 +999,7 @@ class GraphState extends ChangeNotifier {
         curr = _nodes.values.firstWhere((n) =>
           n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study ||
           n.type == NodeType.summarize || n.type == NodeType.wikiWriter ||
-          n.type == NodeType.council || n.type == NodeType.researchParty
+          n.type == NodeType.council || n.type == NodeType.researchParty || n.type == NodeType.compressor
         ).id;
       } catch (_) { return []; }
     }
@@ -951,10 +1011,7 @@ class GraphState extends ChangeNotifier {
   String getCompiledRawText(List<StoryNode> nodesToCompile) {
     StringBuffer buffer = StringBuffer();
     for (var node in nodesToCompile) {
-      // --- START OF FIX ---
-      // We skip the Merge node exactly like we skip standard tool nodes
       if (node.type != NodeType.scene) continue; 
-      // --- END OF FIX ---
       buffer.writeln(node.title.toUpperCase()); 
       buffer.writeln(node.content); 
       buffer.writeln("\n---\n"); 
@@ -990,6 +1047,15 @@ class GraphState extends ChangeNotifier {
     if (_nodes.containsKey(id)) {
       requestUndoSnapshot();
       _nodes[id]!.searchLimit = limit;
+      notifyListeners();
+    }
+  }
+
+  // --- NEW: Target Cut Count Updater ---
+  void updateTargetCutCount(String id, int count) {
+    if (_nodes.containsKey(id)) {
+      requestUndoSnapshot();
+      _nodes[id]!.targetCutCount = count;
       notifyListeners();
     }
   }

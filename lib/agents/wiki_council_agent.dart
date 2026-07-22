@@ -6,8 +6,15 @@ import '../models/node_models.dart';
 import '../state/graph_state.dart';
 import '../state/network_state.dart';
 import '../services/ollama_service.dart';
+import 'media_evidence.dart';
 
 class WikiCouncilAgent {
+  
+  // Sizes num_ctx to the prompt so debate turns aren't silently truncated at
+  // Ollama's ~4k default once evidence packs and long transcripts of debate
+  // accumulate. Capped modestly - council prompts should stay compact.
+  static int _ctxFor(String prompt) =>
+      ((prompt.length / 2.8).ceil() + 2500).clamp(4096, 16384);
   
   // Helper to parse the JSON safely
   static Map<String, dynamic> _parseAgentJSON(String response) {
@@ -83,6 +90,39 @@ class WikiCouncilAgent {
        // --- FIX: Added merge to the ignore list ---
        if (n.type == NodeType.output || n.type == NodeType.chat || n.type == NodeType.study || n.type == NodeType.summarize || n.type == NodeType.wikiWriter || n.type == NodeType.council || n.type == NodeType.researchParty || n.type == NodeType.merge) continue;
        
+       // --- NEW: A finished Media Compressor paper edit joins the debate
+       // as verified evidence (compact, pre-checked, no distillation needed).
+       if (n.type == NodeType.compressor && n.ollamaResult.contains('**[Doc')) {
+          upstreamContext.writeln("\n>>> VERIFIED PAPER EDIT (MEDIA COMPRESSOR) <<<");
+          upstreamContext.writeln("These cuts were machine-verified as verbatim dialogue at their exact timestamps - treat them as ground truth. Cite with timestamp, e.g. [Doc 1 @ 01:10:47].");
+          upstreamContext.writeln(n.ollamaResult);
+          upstreamContext.writeln(">>> END PAPER EDIT <<<\n");
+          continue;
+       }
+
+       // --- NEW: Media Compressor cutlists enter as verified evidence -
+       // compact, verbatim, timestamped. Perfect debate material.
+       if (n.type == NodeType.compressor && n.ollamaResult.isNotEmpty) {
+          upstreamContext.writeln("\n>>> VERIFIED PAPER EDIT (from Media Compressor) <<<");
+          upstreamContext.writeln("Every quote below was machine-verified VERBATIM against source subtitles with true timestamps. Treat as ground truth.");
+          upstreamContext.writeln(n.ollamaResult);
+          upstreamContext.writeln(">>> END VERIFIED PAPER EDIT <<<\n");
+          continue;
+       }
+
+       // --- NEW: Media Readers enter the adversarial loop as distilled,
+       // machine-verified Evidence Packs - never as raw transcripts, which
+       // would be copied into every expert's turn and silently truncated.
+       if (n.type == NodeType.mediaReader && n.content.isNotEmpty) {
+          node.ollamaResult += "> [System] Distilling media evidence from Media Reader '${n.content}'...\n"; onUpdate();
+          upstreamContext.writeln(await MediaEvidenceAgent.buildPack(
+            mediaNode: n,
+            networkState: networkState,
+            onProgress: (msg) { node.ollamaResult += msg; onUpdate(); },
+          ));
+          continue;
+       }
+
        if (n.type == NodeType.wikiReader && n.wikiTitle.isNotEmpty && n.wikiTitle != node.wikiTitle) {
           upstreamContext.writeln("\n>>> UPSTREAM WIKI PAGE STATE: '${n.wikiTitle}' <<<");
           upstreamContext.writeln(await graphState.readWikiPage(n.wikiTitle, networkState));
@@ -168,6 +208,8 @@ ${upstreamContext.toString()}""";
         model: networkState.ollamaModel,
         prompt: phase1Prompt,
         format: "json",
+        numCtx: _ctxFor(phase1Prompt),
+        think: false,
       );
         
       final p1Json = _parseAgentJSON(responseText);
@@ -301,6 +343,8 @@ ${debateTranscript.isEmpty ? "You are the first to speak. Begin the debate." : d
             baseUrl: networkState.ollamaUrl,
             model: networkState.ollamaModel,
             prompt: debatePrompt,
+            numCtx: _ctxFor(debatePrompt),
+            think: false,
           );
           
           debateTranscript += "**${expert['name']}**: $responseText\n\n";
@@ -352,6 +396,8 @@ $debateTranscript""";
                     baseUrl: networkState.ollamaUrl,
                     model: networkState.ollamaModel,
                     prompt: responsePrompt,
+                    numCtx: _ctxFor(responsePrompt),
+                    think: false,
                   );
                   
                   debateTranscript += "**${expert['name']}**: $responseText\n\n";
@@ -431,6 +477,8 @@ CRITICAL BRACKET AND LINKING RULES:
         model: networkState.ollamaModel,
         prompt: synthesisPrompt,
         system: systemInstruction,
+        numCtx: _ctxFor(synthesisPrompt + systemInstruction),
+        think: false,
       );
       
       await for (final chunk in stream) {

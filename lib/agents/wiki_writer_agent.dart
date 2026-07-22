@@ -1,11 +1,10 @@
 // --- File: lib/agents/wiki_writer_agent.dart ---
-import 'dart:convert';
-
 import '../constants.dart'; 
 import '../models/node_models.dart';
 import '../state/graph_state.dart';
 import '../state/network_state.dart';
 import '../services/ollama_service.dart';
+import 'media_evidence.dart';
 
 class WikiWriterAgent {
   static Future<void> execute({
@@ -21,6 +20,7 @@ class WikiWriterAgent {
     StringBuffer upstreamContext = StringBuffer();
     String customPersona = "";
     bool hasCouncilRewrite = false;
+    bool hasCutlist = false;
 
     // --- Fetch existing wiki pages to guide the LLM ---
     final existingPages = await graphState.listWikiPages(networkState);
@@ -36,6 +36,39 @@ class WikiWriterAgent {
        
        if (n.type == NodeType.persona) {
           customPersona = n.content.trim();
+          continue;
+       }
+
+       // --- NEW: A finished Media Compressor paper edit is prime wiki
+       // material: QC-verified verbatim sound bites with true timestamps.
+       if (n.type == NodeType.compressor && n.ollamaResult.contains('**[Doc')) {
+          upstreamContext.writeln("\n>>> VERIFIED PAPER EDIT (MEDIA COMPRESSOR) <<<");
+          upstreamContext.writeln("The following cuts were machine-verified as verbatim dialogue at their exact timestamps. Use them as the article's key quotations - quote them as blockquotes where appropriate, and ALWAYS carry their [Doc X] citation with the timestamp, e.g. [Doc 1 @ 01:10:47].");
+          upstreamContext.writeln(n.ollamaResult);
+          upstreamContext.writeln(">>> END PAPER EDIT <<<\n");
+          continue;
+       }
+
+       // --- NEW: Media Compressor cutlists are already machine-verified
+       // (verbatim quotes, true timestamps) - the best source material in
+       // the system. Inject them as primary evidence.
+       if (n.type == NodeType.compressor && n.ollamaResult.isNotEmpty) {
+          hasCutlist = true;
+          upstreamContext.writeln("\n>>> VERIFIED PAPER EDIT (from Media Compressor) <<<");
+          upstreamContext.writeln("Every quote below was machine-verified VERBATIM against the source subtitles, with true timestamps. Treat these as ground truth about the talk/video.");
+          upstreamContext.writeln(n.ollamaResult);
+          upstreamContext.writeln(">>> END VERIFIED PAPER EDIT <<<\n");
+          continue;
+       }
+
+       // --- NEW: Media Readers arrive as distilled, verified Evidence Packs.
+       if (n.type == NodeType.mediaReader && n.content.isNotEmpty) {
+          node.ollamaResult += "> [System] Distilling media evidence from Media Reader '${n.content}'...\n"; onUpdate();
+          upstreamContext.writeln(await MediaEvidenceAgent.buildPack(
+            mediaNode: n,
+            networkState: networkState,
+            onProgress: (msg) { node.ollamaResult += msg; onUpdate(); },
+          ));
           continue;
        }
 
@@ -117,6 +150,11 @@ class WikiWriterAgent {
       userInstructions += "PRIMARY DIRECTIVE:\n${node.ollamaPrompt}\n\n";
     }
 
+    // --- NEW: Dynamic directive when a Compressor cutlist is upstream ---
+    if (hasCutlist) {
+      userInstructions += "MEDIA DIRECTIVE: An upstream Media Compressor has provided a VERIFIED PAPER EDIT of a talk/video. Build the wiki page around this media: what it is (use the File/Metadata info), who speaks, its central claims and narrative, and its most significant statements. Weave the verified quotes into the page with their timestamps, citing them as [Doc X @ HH:MM:SS] (single brackets). Do not invent quotes beyond those provided.\n\n";
+    }
+
     // --- FIX: Dynamic injection if a Council node is detected ---
     if (hasCouncilRewrite) {
       userInstructions += "COUNCIL DIRECTIVE: An upstream Wiki Council has provided a proposed rewrite in the context. Treat their proposal as your primary baseline draft. Apply any formatting or editor chat feedback to it before finalizing.\n\n";
@@ -182,6 +220,8 @@ CRITICAL FORMATTING RULES:
         model: networkState.ollamaModel,
         prompt: fullPayload,
         system: systemInstruction,
+        numCtx: ((fullPayload.length + systemInstruction.length) ~/ 3 + 3000).clamp(4096, 20480),
+        think: false,
       );
       
       await for (final chunk in stream) {

@@ -25,8 +25,54 @@ class _NodeCanvasState extends State<NodeCanvas> {
   final FocusNode _canvasFocusNode = FocusNode();
   Offset _lastMouseScreenPos = Offset.zero;
 
+  // --- NEW: Rejection feedback (SnackBar on refused connections) ---
+  CanvasState? _canvasStateRef;
+  int _lastSeenRejectionTick = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _canvasStateRef = context.read<CanvasState>();
+      _lastSeenRejectionTick = _canvasStateRef!.rejectionTick;
+      _canvasStateRef!.addListener(_onCanvasStateChanged);
+    });
+  }
+
+  void _onCanvasStateChanged() {
+    final cs = _canvasStateRef;
+    if (cs == null || !mounted) return;
+    if (cs.rejectionTick != _lastSeenRejectionTick) {
+      _lastSeenRejectionTick = cs.rejectionTick;
+      final msg = cs.lastRejectionMessage;
+      if (msg != null) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.sync_problem, color: Colors.redAccent, size: 20),
+                const SizedBox(width: 10),
+                Expanded(child: Text(msg, style: const TextStyle(color: Colors.white))),
+              ],
+            ),
+            backgroundColor: const Color(0xFF3A1F1F),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+              side: const BorderSide(color: Colors.redAccent, width: 1),
+            ),
+          ),
+        );
+      }
+    }
+  }
+
   @override
   void dispose() {
+    _canvasStateRef?.removeListener(_onCanvasStateChanged);
     _canvasFocusNode.dispose();
     super.dispose();
   }
@@ -121,7 +167,10 @@ class _NodeCanvasState extends State<NodeCanvas> {
                   PopupMenuItem(value: NodeType.wikiWriter, child: Text("🖋️ Add Wiki Writer")),
                   PopupMenuItem(value: NodeType.council, child: Text("🏛️ Add Wiki Council")), 
                   PopupMenuItem(value: NodeType.researchParty, child: Text("🏕️ Add Research Party")), 
-                  PopupMenuItem(value: NodeType.merge, child: Text("🔀 Add Merge Context")), 
+                  PopupMenuItem(value: NodeType.merge, child: Text("🔀 Add Merge Context")),
+                  // --- NEW MEDIA NODES ---
+                  PopupMenuItem(value: NodeType.mediaReader, child: Text("🎞️ Add Media/SRT Reader")),
+                  PopupMenuItem(value: NodeType.compressor, child: Text("🎬 Add Media Compressor")),
                 ],
               ).then((type) {
                 if (type != null) graphState.addNode(canvasPos, type);
@@ -298,6 +347,17 @@ class _NodeVisualState extends State<NodeVisual> {
         displayTitle = "MERGE CONTEXT";
         iconColor = Colors.yellowAccent;
         break;
+      // --- NEW MEDIA NODES ---
+      case NodeType.mediaReader: 
+        iconData = Icons.closed_caption;
+        displayTitle = node.content.isEmpty ? "MEDIA READER" : "MEDIA #${node.content}";
+        iconColor = Colors.cyanAccent;
+        break;
+      case NodeType.compressor: 
+        iconData = Icons.movie_filter;
+        displayTitle = "MEDIA COMPRESSOR";
+        iconColor = Colors.redAccent;
+        break;
       default:
         iconData = Icons.extension;
         displayTitle = "TOOL";
@@ -307,7 +367,7 @@ class _NodeVisualState extends State<NodeVisual> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        if ((node.type == NodeType.output || node.type == NodeType.chat || node.type == NodeType.study || node.type == NodeType.summarize || node.type == NodeType.wikiWriter || node.type == NodeType.council || node.type == NodeType.researchParty) && isGenerating) 
+        if ((node.type == NodeType.output || node.type == NodeType.chat || node.type == NodeType.study || node.type == NodeType.summarize || node.type == NodeType.wikiWriter || node.type == NodeType.council || node.type == NodeType.researchParty || node.type == NodeType.compressor) && isGenerating) 
           const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
         else if (node.type != NodeType.merge)
           Icon(iconData, size: 24, color: iconColor), 
@@ -392,7 +452,7 @@ class _NodeVisualState extends State<NodeVisual> {
     final isCycleHover = context.select<CanvasState, bool>((s) => s.isInvalidCycle) && (isHoverTarget || isSwapTarget);
 
     final bool isGenerating = context.select<NetworkState, bool>((s) => s.isNodeGenerating(nodeId)) && 
-      (node.type == NodeType.output || node.type == NodeType.chat || node.type == NodeType.study || node.type == NodeType.summarize || node.type == NodeType.wikiWriter || node.type == NodeType.council || node.type == NodeType.researchParty);
+      (node.type == NodeType.output || node.type == NodeType.chat || node.type == NodeType.study || node.type == NodeType.summarize || node.type == NodeType.wikiWriter || node.type == NodeType.council || node.type == NodeType.researchParty || node.type == NodeType.compressor);
     
     final double height = node.currentHeight;
     final double width = graphState.getNodeWidth(nodeId); 
@@ -530,6 +590,8 @@ class _NodeVisualState extends State<NodeVisual> {
 
               ...inputPorts,
 
+              // --- NEW: Compressor is no longer terminal - its verified
+              // cutlist feeds the Wiki Writer / Council downstream.
               if (node.type != NodeType.output && node.type != NodeType.chat && node.type != NodeType.wikiWriter)
                 Positioned(
                   bottom: -20, 
